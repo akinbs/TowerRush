@@ -11,6 +11,7 @@ export class HudController {
   private scoreText!: Phaser.GameObjects.Text;
   private heightText!: Phaser.GameObjects.Text;
   private bestText!: Phaser.GameObjects.Text;
+  private phaseText!: Phaser.GameObjects.Text;
   private towerNameText!: Phaser.GameObjects.Text;
   private pausedOverlay!: Phaser.GameObjects.Text;
 
@@ -25,16 +26,17 @@ export class HudController {
     scene.scale.on("resize", this.resizeHandler);
   }
 
-  update(snapshot: ScoreSnapshot, isPaused: boolean): void {
+  update(snapshot: ScoreSnapshot, isPaused: boolean, phaseLabel?: string): void {
     this.scoreText.setText(`Score: ${snapshot.score}`);
     this.heightText.setText(`Height: ${snapshot.currentHeightMeters} m`);
     this.bestText.setText(`Best: ${snapshot.bestHeightMeters} m`);
+    if (phaseLabel !== undefined) this.phaseText.setText(phaseLabel);
     this.pausedOverlay.setVisible(isPaused);
   }
 
   setVisible(visible: boolean): void {
     for (const obj of [this.scoreText, this.heightText, this.bestText,
-                        this.towerNameText, this.pausedOverlay]) {
+                        this.phaseText, this.towerNameText, this.pausedOverlay]) {
       obj.setVisible(visible);
     }
   }
@@ -42,7 +44,7 @@ export class HudController {
   destroy(): void {
     this.scene.scale.off("resize", this.resizeHandler);
     for (const obj of [this.scoreText, this.heightText, this.bestText,
-                        this.towerNameText, this.pausedOverlay]) {
+                        this.phaseText, this.towerNameText, this.pausedOverlay]) {
       obj.destroy();
     }
   }
@@ -61,6 +63,7 @@ export class HudController {
     this.scoreText = this.scene.add.text(pad, pad,        "Score: 0",   textStyle);
     this.heightText = this.scene.add.text(pad, pad + lh,  "Height: 0 m", textStyle);
     this.bestText   = this.scene.add.text(pad, pad + lh * 2, "Best: 0 m", dimStyle);
+    this.phaseText  = this.scene.add.text(pad, pad + lh * 3, "",          dimStyle);
 
     this.towerNameText = this.scene.add
       .text(W / 2, pad, this.towerName,
@@ -81,7 +84,7 @@ export class HudController {
 
     // Apply scroll-factor and depth to all elements.
     const all = [this.scoreText, this.heightText, this.bestText,
-                 this.towerNameText, this.pausedOverlay];
+                 this.phaseText, this.towerNameText, this.pausedOverlay];
     for (const el of all) {
       el.setScrollFactor(0).setDepth(UI_CONFIG.hudDepth);
     }
@@ -96,6 +99,7 @@ export class HudController {
     this.scoreText.setPosition(pad, pad);
     this.heightText.setPosition(pad, pad + lh);
     this.bestText.setPosition(pad, pad + lh * 2);
+    this.phaseText.setPosition(pad, pad + lh * 3);
     this.towerNameText.setPosition(W / 2, pad);
     this.pausedOverlay.setPosition(W / 2, H / 2);
   }

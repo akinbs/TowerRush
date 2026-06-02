@@ -1,26 +1,42 @@
 import Phaser from "phaser";
 import { Platform } from "../entities/Platform";
-import type { PlatformConfig, PlatformGenerationConfig, TowerPhaseConfig } from "../types/gameTypes";
+import type { MovingPlatformConfig, PlatformConfig, PlatformGenerationConfig, PlatformType, TowerPhaseConfig } from "../types/gameTypes";
 import { PLATFORM_GEN_CONFIG } from "../config/platformGenerationConfig";
+import {
+  ICE_TOWER_GOAL_PLATFORM_WIDTH,
+  ICE_TOWER_HEIGHT_METERS,
+} from "../config/towerPhaseConfig";
+import { getYFromHeightMeters } from "../utils/heightUtils";
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
   GROUND_HEIGHT,
+  MOVING_PLATFORM_MAX_RANGE,
+  MOVING_PLATFORM_MAX_SPEED,
+  MOVING_PLATFORM_MIN_RANGE,
+  MOVING_PLATFORM_MIN_SPEED,
+  REGIONAL_RENDER_ABOVE_BUFFER_PX,
+  REGIONAL_RENDER_BELOW_BUFFER_PX,
   TEX_GROUND,
   WORLD_HEIGHT,
 } from "../utils/constants";
+
+// Callback that maps a platform's world Y position to its PlatformType.
+// Provided by GameScene / TowerPhaseController to keep PlatformManager
+// decoupled from phase configuration.
+type PlatformTypeResolver = (platformY: number) => PlatformType;
 
 export class PlatformManager {
   readonly platformGroup: Phaser.Physics.Arcade.StaticGroup;
 
   private readonly scene: Phaser.Scene;
   private readonly genConfig: PlatformGenerationConfig;
+  private readonly platformTypeResolver: PlatformTypeResolver | null;
 
   // Active platforms — ground is tracked separately and never cleaned up.
   private platforms: Platform[] = [];
 
   // Y coordinate of the highest (lowest number) generated platform so far.
-  // Starts at ground level; moves upward (decreasing) with each new platform.
   private highestGeneratedY: number;
 
   // X center of the last generated platform — used for reachability checks.
@@ -29,14 +45,26 @@ export class PlatformManager {
   // Max horizontal distance the player can cover in a single jump arc.
   private readonly maxReachX: number;
 
-  constructor(scene: Phaser.Scene, phase: TowerPhaseConfig) {
+  // ── Goal / summit state ──────────────────────────────────────────────────
+  // World Y of the Ice Tower summit where the goal platform is placed.
+  private readonly goalY: number;
+  // The single goal platform, once generated. Never cleaned up.
+  private goalPlatform: Platform | null = null;
+  // True once the goal has been generated — stops all further generation.
+  private hasGeneratedGoal = false;
+
+  constructor(
+    scene: Phaser.Scene,
+    phase: TowerPhaseConfig,
+    typeResolver?: PlatformTypeResolver,
+  ) {
     this.scene = scene;
     this.genConfig = PLATFORM_GEN_CONFIG;
+    this.platformTypeResolver = typeResolver ?? null;
     this.highestGeneratedY = WORLD_HEIGHT - GROUND_HEIGHT;
     this.lastPlatformCenterX = GAME_WIDTH / 2;
+    this.goalY = getYFromHeightMeters(ICE_TOWER_HEIGHT_METERS);
 
-    // Theoretical max reach: full parabolic arc * speed * conservative multiplier.
-    // Formula: moveSpeed × (2 × |jumpVelocity| / gravity) × airControlMultiplier
     const fullAirTime =
       (2 * Math.abs(phase.playerJumpVelocity)) / phase.gravity;
     this.maxReachX =
@@ -47,7 +75,6 @@ export class PlatformManager {
 
   // ── Public API ─────────────────────────────────────────────────────────
 
-  /** Creates ground + initial batch of procedural platforms. */
   createInitialPlatforms(): void {
     this.createGround();
     for (let i = 0; i < this.genConfig.initialPlatformCount; i++) {
@@ -55,31 +82,35 @@ export class PlatformManager {
     }
   }
 
-  /**
-   * Called every frame by GameScene.
-   * Generates ahead of the player and cleans up below the camera.
-   */
-  update(playerY: number, cameraScrollY: number): void {
+  update(playerY: number, cameraScrollY: number, delta: number): void {
     const targetY = playerY - this.genConfig.generateAheadDistance;
     this.generatePlatformsUntil(targetY);
-    this.cleanupPlatforms(cameraScrollY);
+    this.updateRegionalVisibility(cameraScrollY);
+    this.updatePlatforms(delta);
+    this.cleanupFarPlatforms(cameraScrollY);
   }
 
-  /** Generate platforms until highestGeneratedY is at or above targetY. */
   generatePlatformsUntil(targetY: number): void {
-    while (this.highestGeneratedY > targetY) {
+    // Once the goal exists the tower is "capped" — no platforms above it.
+    while (!this.hasGeneratedGoal && this.highestGeneratedY > targetY) {
       this.generateNextPlatform();
     }
   }
 
-  /** Returns the Y of the topmost generated platform. */
   getHighestGeneratedY(): number {
     return this.highestGeneratedY;
   }
 
-  // ── Platform creation ──────────────────────────────────────────────────
+  // ── Goal queries ─────────────────────────────────────────────────────────
 
-  /** Spawns one platform and registers it. */
+  isGoalGenerated(): boolean {
+    return this.hasGeneratedGoal;
+  }
+
+  getGoalPlatform(): Platform | null {
+    return this.goalPlatform;
+  }
+
   createPlatform(config: PlatformConfig): Platform {
     const platform = new Platform(this.scene, config);
     this.platformGroup.add(platform.gameObject);
@@ -87,9 +118,25 @@ export class PlatformManager {
     return platform;
   }
 
+  // Looks up a Platform by its Phaser game object — used by the collision
+  // callback in GameScene to identify the platform type the player touched.
+  getPlatformByGameObject(go: Phaser.GameObjects.GameObject): Platform | undefined {
+    return this.platforms.find((p) => p.gameObject === go);
+  }
+
   // ── Procedural generation ──────────────────────────────────────────────
 
   private generateNextPlatform(): void {
+    if (this.hasGeneratedGoal) return;
+
+    // When the summit comes within a single max-jump of the highest platform,
+    // place the goal instead of another normal platform. This guarantees the
+    // final gap is at most maxVerticalGap (i.e. always reachable).
+    if (this.shouldGenerateGoal()) {
+      this.generateGoalPlatform();
+      return;
+    }
+
     const cfg = this.genConfig;
 
     const vertGap = Phaser.Math.Between(cfg.minVerticalGap, cfg.maxVerticalGap);
@@ -103,7 +150,6 @@ export class PlatformManager {
     let candidateX = Phaser.Math.Between(minX, maxX);
     let attempts = 0;
 
-    // Try random candidates until one passes the reachability gate.
     while (
       !this.isPlatformReachable(this.lastPlatformCenterX, candidateX) &&
       attempts < cfg.maxGenerationAttempts
@@ -112,7 +158,6 @@ export class PlatformManager {
       attempts++;
     }
 
-    // Fallback: clamp to the reachable range around the last platform.
     if (!this.isPlatformReachable(this.lastPlatformCenterX, candidateX)) {
       const clampedX = Phaser.Math.Clamp(
         candidateX,
@@ -122,33 +167,118 @@ export class PlatformManager {
       candidateX = Phaser.Math.Clamp(clampedX, minX, maxX);
     }
 
-    this.createPlatform({ x: candidateX, y: newY, width, type: "normal" });
+    // Ask the resolver for the type; fall back to normal if none provided.
+    const type: PlatformType = this.platformTypeResolver
+      ? this.platformTypeResolver(newY)
+      : "normal";
+
+    // For moving platforms, pre-compute oscillation bounds so Platform
+    // doesn't need to know about world dimensions or gen config.
+    let moving: MovingPlatformConfig | undefined;
+    if (type === "moving") {
+      const range    = Phaser.Math.Between(MOVING_PLATFORM_MIN_RANGE, MOVING_PLATFORM_MAX_RANGE);
+      const halfRange = range / 2;
+      moving = {
+        speedPxPerSecond: Phaser.Math.Between(MOVING_PLATFORM_MIN_SPEED, MOVING_PLATFORM_MAX_SPEED),
+        minX: Math.max(minX, candidateX - halfRange),
+        maxX: Math.min(maxX, candidateX + halfRange),
+      };
+    }
+
+    this.createPlatform({ x: candidateX, y: newY, width, type, moving });
     this.highestGeneratedY = newY;
     this.lastPlatformCenterX = candidateX;
   }
 
-  /**
-   * Returns true when the horizontal gap between platforms is within
-   * the player's maximum aerial reach.
-   */
   isPlatformReachable(prevCenterX: number, candidateCenterX: number): boolean {
     return Math.abs(candidateCenterX - prevCenterX) <= this.maxReachX;
   }
 
+  // ── Goal generation ────────────────────────────────────────────────────
+
+  // True when the summit is within one max-jump of the highest platform, so
+  // a goal placed at goalY is guaranteed to be vertically reachable.
+  private shouldGenerateGoal(): boolean {
+    return this.highestGeneratedY - this.goalY <= this.genConfig.maxVerticalGap;
+  }
+
+  // Places the single goal platform at the exact summit height. The X is the
+  // last platform's center clamped within reach and world padding, so the
+  // wide goal slab is always a fair final jump (no random retries).
+  private generateGoalPlatform(): void {
+    const cfg = this.genConfig;
+    const width = ICE_TOWER_GOAL_PLATFORM_WIDTH;
+    const halfWidth = width / 2;
+    const minX = cfg.safeHorizontalPadding + halfWidth;
+    const maxX = GAME_WIDTH - cfg.safeHorizontalPadding - halfWidth;
+
+    const reachClampedX = Phaser.Math.Clamp(
+      this.lastPlatformCenterX,
+      this.lastPlatformCenterX - this.maxReachX,
+      this.lastPlatformCenterX + this.maxReachX,
+    );
+    const goalX = Phaser.Math.Clamp(reachClampedX, minX, maxX);
+
+    this.goalPlatform = this.createPlatform({
+      x: goalX,
+      y: this.goalY,
+      width,
+      type: "goal",
+    });
+
+    this.hasGeneratedGoal = true;
+    this.highestGeneratedY = this.goalY;
+    this.lastPlatformCenterX = goalX;
+  }
+
+  // ── Platform tick ──────────────────────────────────────────────────────
+
+  private updatePlatforms(delta: number): void {
+    let needsRefresh = false;
+    for (const platform of this.platforms) {
+      if (platform.update(delta)) {
+        needsRefresh = true;
+      }
+    }
+    if (needsRefresh) {
+      this.platformGroup.refresh();
+    }
+  }
+
+  // ── Regional visibility ────────────────────────────────────────────────
+
+  private updateRegionalVisibility(cameraScrollY: number): void {
+    const regionalTopY    = cameraScrollY - REGIONAL_RENDER_ABOVE_BUFFER_PX;
+    const regionalBottomY = cameraScrollY + GAME_HEIGHT + REGIONAL_RENDER_BELOW_BUFFER_PX;
+
+    for (const platform of this.platforms) {
+      // Broken platforms are permanently disabled — never re-activate them.
+      if (platform.isBroken()) {
+        platform.gameObject.setVisible(false);
+        (platform.gameObject.body as Phaser.Physics.Arcade.StaticBody).enable = false;
+        continue;
+      }
+
+      const y = platform.gameObject.y;
+      const inRegion = y >= regionalTopY && y <= regionalBottomY;
+      const body = platform.gameObject.body as Phaser.Physics.Arcade.StaticBody;
+
+      platform.gameObject.setVisible(inRegion);
+      body.enable = inRegion;
+    }
+  }
+
   // ── Cleanup ────────────────────────────────────────────────────────────
 
-  /**
-   * Destroys platforms that have scrolled far below the camera's bottom edge.
-   * The ground image is NOT in `platforms[]` and is never cleaned up.
-   */
-  cleanupPlatforms(cameraScrollY: number): void {
-    const threshold = cameraScrollY + GAME_HEIGHT + this.genConfig.cleanupBelowDistance;
+  private cleanupFarPlatforms(cameraScrollY: number): void {
+    const destroyTopThreshold = cameraScrollY - REGIONAL_RENDER_ABOVE_BUFFER_PX * 3;
     let cleaned = false;
 
     this.platforms = this.platforms.filter((platform) => {
-      if (platform.gameObject.y > threshold) {
-        // Remove from static group first so the physics quadtree is updated,
-        // then destroy the game object (which also destroys the StaticBody).
+      // The goal platform is the tower's summit and must survive until restart,
+      // even if it scrolls far off the top of the cleanup region.
+      if (platform.isGoal()) return true;
+      if (platform.gameObject.y < destroyTopThreshold) {
         this.platformGroup.remove(platform.gameObject, true, true);
         cleaned = true;
         return false;
@@ -156,7 +286,6 @@ export class PlatformManager {
       return true;
     });
 
-    // Force a quadtree rebuild after any removals so collision stays correct.
     if (cleaned) {
       this.platformGroup.refresh();
     }
@@ -177,6 +306,6 @@ export class PlatformManager {
 
     this.platformGroup.add(groundImg);
     // Note: groundImg is intentionally NOT added to `this.platforms[]`
-    // so it is excluded from the cleanup pass.
+    // so it is excluded from visibility toggling, cleanup, and type lookup.
   }
 }

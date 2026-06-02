@@ -16,9 +16,16 @@ export const UI_CONFIG = {
   hudDepth: 90,
   buttonDepth: 100,
   gameOverDepth: 150,
+  towerCompleteDepth: 160,
 
   // Game Over overlay
   gameOverBgAlpha: 0.72,
+
+  // Tower Complete overlay
+  towerCompleteBgAlpha: 0.78,
+  towerCompleteTitleColor: "#ffdd66",
+  towerCompleteAccentColor: "#aef0ff",
+  continueDisabledColor: "#667088",
 
   // Colors
   buttonFillNormal: 0x223355,

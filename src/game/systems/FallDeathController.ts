@@ -1,53 +1,101 @@
 import type { Player } from "../entities/Player";
-import type { DeathReason } from "../types/gameTypes";
+import type { DeathReason, ScoreSnapshot } from "../types/gameTypes";
 import {
-  FALL_DEATH_DISTANCE_METERS,
-  FALL_WARNING_DISTANCE_METERS,
-  MIN_HEIGHT_FOR_FALL_DEATH_METERS,
-  GROUND_SURFACE_Y,
+  FALL_DAMAGE_DEATH_DISTANCE_METERS,
+  FALL_DAMAGE_MIN_HEIGHT_METERS,
+  FALL_DAMAGE_MIN_VELOCITY_Y,
+  FALL_DAMAGE_WARNING_DISTANCE_METERS,
   PIXELS_PER_METER,
 } from "../utils/constants";
 
 export class FallDeathController {
-  // Highest Y position the player has reached (lower Y = higher in the world).
-  private peakY = GROUND_SURFACE_Y;
+  // Lowest Y (= highest world position) the player reached in the current airborne phase.
+  // null means the player is on the ground or just became airborne this frame.
+  private peakAirY: number | null = null;
+
+  // True once fall distance + velocity thresholds are both exceeded.
+  // Stays true until landing (death) or scene restart (reset).
+  private dangerousFallArmed = false;
+
+  // Latched on the first frame dangerousFallArmed && isOnGround.
+  private deathPending = false;
+
+  private deathReason: DeathReason | null = null;
+  private currentFallDistanceMeters = 0;
 
   reset(): void {
-    this.peakY = GROUND_SURFACE_Y;
+    this.peakAirY = null;
+    this.dangerousFallArmed = false;
+    this.deathPending = false;
+    this.deathReason = null;
+    this.currentFallDistanceMeters = 0;
   }
 
-  update(player: Player): void {
+  update(player: Player, snapshot: ScoreSnapshot): void {
+    if (this.deathPending) return;
+
+    const isGrounded = player.isOnGround();
     const y = player.getY();
-    if (y < this.peakY) {
-      this.peakY = y;
+    const velocityY = player.getVelocityY();
+
+    if (!isGrounded) {
+      // Track the peak (highest point = smallest Y) of this airborne phase.
+      if (this.peakAirY === null) {
+        this.peakAirY = y;
+      }
+      this.peakAirY = Math.min(this.peakAirY, y);
+
+      // Current fall distance measured from the peak of this airborne phase.
+      const fallDistancePx = Math.max(0, y - this.peakAirY);
+      this.currentFallDistanceMeters = fallDistancePx / PIXELS_PER_METER;
+
+      // Arm dangerous fall when all three guards are met.
+      if (
+        !this.dangerousFallArmed &&
+        snapshot.bestHeightMeters >= FALL_DAMAGE_MIN_HEIGHT_METERS &&
+        this.currentFallDistanceMeters >= FALL_DAMAGE_DEATH_DISTANCE_METERS &&
+        velocityY > FALL_DAMAGE_MIN_VELOCITY_Y
+      ) {
+        this.dangerousFallArmed = true;
+      }
+    }
+
+    if (isGrounded) {
+      if (this.dangerousFallArmed) {
+        // Death on any landing after a dangerous fall — platform or ground, visible or not.
+        this.deathPending = true;
+        this.deathReason = "fall_damage_landing";
+        return;
+      }
+
+      // Safe landing — reset airborne tracking for the next jump.
+      this.peakAirY = null;
+      this.currentFallDistanceMeters = 0;
+      this.dangerousFallArmed = false;
     }
   }
 
-  // Returns a DeathReason if the player should die this frame, null otherwise.
-  checkDeath(player: Player): DeathReason | null {
-    if (!player.isFalling()) return null;
-
-    const peakHeightMeters = (GROUND_SURFACE_Y - this.peakY) / PIXELS_PER_METER;
-    if (peakHeightMeters < MIN_HEIGHT_FOR_FALL_DEATH_METERS) return null;
-
-    const fallMeters = (player.getY() - this.peakY) / PIXELS_PER_METER;
-    if (fallMeters >= FALL_DEATH_DISTANCE_METERS) {
-      return "fall_distance";
-    }
-
-    return null;
+  shouldTriggerDeath(): boolean {
+    return this.deathPending;
   }
 
-  // Returns true when the player is in the warning zone (not yet dead).
-  isInWarningZone(player: Player): boolean {
-    if (!player.isFalling()) return false;
-
-    const peakHeightMeters = (GROUND_SURFACE_Y - this.peakY) / PIXELS_PER_METER;
-    if (peakHeightMeters < MIN_HEIGHT_FOR_FALL_DEATH_METERS) return false;
-
-    const fallMeters = (player.getY() - this.peakY) / PIXELS_PER_METER;
-    return fallMeters >= FALL_WARNING_DISTANCE_METERS && fallMeters < FALL_DEATH_DISTANCE_METERS;
+  getDeathReason(): DeathReason | null {
+    return this.deathReason;
   }
 
-  getPeakY(): number { return this.peakY; }
+  getFallDistanceMeters(): number {
+    return this.currentFallDistanceMeters;
+  }
+
+  isDangerousFallArmed(): boolean {
+    return this.dangerousFallArmed;
+  }
+
+  // True during the warning zone — fall is significant but not yet lethal.
+  isWarning(): boolean {
+    return (
+      !this.dangerousFallArmed &&
+      this.currentFallDistanceMeters >= FALL_DAMAGE_WARNING_DISTANCE_METERS
+    );
+  }
 }

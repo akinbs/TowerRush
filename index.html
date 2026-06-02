@@ -36,11 +36,12 @@
   <body>
     <div id="game-container"></div>
     <!--
-      TODO: YouTube Playables SDK
-      <script src="https://www.youtube.com/playables/..."></script>
-      Call ytgame.game.firstFrameReady() after first render.
-      Call ytgame.game.gameReady() when the game is interactive.
+      YouTube Playables SDK — must load BEFORE the game bundle so `window.ytgame`
+      exists when our code runs. This classic <script> executes before the
+      deferred ES module below. In local dev the request may not resolve; that
+      is expected — the bridge degrades to a no-op fallback when ytgame is absent.
     -->
+    <script src="https://www.youtube.com/game_api/v1"></script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
