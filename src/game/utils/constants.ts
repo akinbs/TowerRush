@@ -93,6 +93,11 @@ export const MOVING_PLATFORM_MAX_SPEED = 85;
 export const MOVING_PLATFORM_MIN_RANGE = 70;
 export const MOVING_PLATFORM_MAX_RANGE = 170;
 
+// Carry only applies while the player is settling/standing, not launching off
+// the platform. velocityY at or above this (downward-positive) gates out the
+// single jump-launch frame where blocked.down can still read true.
+export const MOVING_PLATFORM_CARRY_MAX_UP_VELOCITY = -20;
+
 // ── Breakable Platform ─────────────────────────────────────────────────────
 
 // Delay (ms) from first touch to the platform fully breaking.
@@ -100,6 +105,20 @@ export const BREAKABLE_BREAK_DELAY_MS = 1500;
 
 // Alpha-flash interval (ms) during the cracking warning state.
 export const BREAKABLE_WARNING_FLASH_INTERVAL_MS = 150;
+
+// ── Player landing squash/stretch ──────────────────────────────────────────
+
+// Peak scale multipliers on landing (relative to the sprite's base scale).
+// Facing uses setFlipX, NOT scaleX sign, so scaling X here is direction-safe.
+export const PLAYER_SQUASH_SCALE_X = 1.08;
+export const PLAYER_SQUASH_SCALE_Y = 0.88;
+// Tween duration (ms) back from the squashed pose to the base scale.
+export const PLAYER_SQUASH_DURATION_MS = 140;
+// Impact velocity (px/s) that maps to the full squash amount.
+export const PLAYER_SQUASH_REF_VELOCITY = 800;
+// Minimum fraction of the squash applied at the gating velocity (soft landings
+// still squash a little, hard landings squash fully).
+export const PLAYER_SQUASH_MIN_FACTOR = 0.5;
 
 // ── Player animation ───────────────────────────────────────────────────────
 
@@ -121,3 +140,6 @@ export const TEX_PLATFORM_BREAKABLE = "platform-breakable";
 export const TEX_PLATFORM_MOVING = "platform-moving";
 export const TEX_PLATFORM_GOAL = "platform-goal";
 export const TEX_GROUND = "ground";
+export const TEX_PROJECTILE = "projectile";
+// Hailstone textures are keyed by radius: `${TEX_HAILSTONE_PREFIX}${radius}`.
+export const TEX_HAILSTONE_PREFIX = "hailstone-";

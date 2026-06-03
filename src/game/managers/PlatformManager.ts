@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { Platform } from "../entities/Platform";
-import type { MovingPlatformConfig, PlatformConfig, PlatformGenerationConfig, PlatformType, TowerPhaseConfig } from "../types/gameTypes";
+import type { MovingPlatformConfig, PlatformConfig, PlatformGenerationConfig, PlatformManagerUpdateResult, PlatformType, TowerPhaseConfig } from "../types/gameTypes";
 import { PLATFORM_GEN_CONFIG } from "../config/platformGenerationConfig";
 import {
   ICE_TOWER_GOAL_PLATFORM_WIDTH,
@@ -82,12 +82,16 @@ export class PlatformManager {
     }
   }
 
-  update(playerY: number, cameraScrollY: number, delta: number): void {
+  update(playerY: number, cameraScrollY: number, delta: number): PlatformManagerUpdateResult {
     const targetY = playerY - this.genConfig.generateAheadDistance;
     this.generatePlatformsUntil(targetY);
     this.updateRegionalVisibility(cameraScrollY);
-    this.updatePlatforms(delta);
+    const brokenPlatformPositions = this.updatePlatforms(delta);
     this.cleanupFarPlatforms(cameraScrollY);
+    return {
+      brokenPlatformsCount: brokenPlatformPositions.length,
+      brokenPlatformPositions,
+    };
   }
 
   generatePlatformsUntil(targetY: number): void {
@@ -122,6 +126,14 @@ export class PlatformManager {
   // callback in GameScene to identify the platform type the player touched.
   getPlatformByGameObject(go: Phaser.GameObjects.GameObject): Platform | undefined {
     return this.platforms.find((p) => p.gameObject === go);
+  }
+
+  // Returns every live (non-broken) logical platform — used by SnowController to
+  // cap all platforms while snow is active (on-screen or not) and to keep newly
+  // generated platforms in sync. Excludes the ground (not tracked here) and
+  // already cleaned-up platforms.
+  getSnowEligiblePlatforms(): Platform[] {
+    return this.platforms.filter((p) => !p.isBroken());
   }
 
   // ── Procedural generation ──────────────────────────────────────────────
@@ -233,16 +245,23 @@ export class PlatformManager {
 
   // ── Platform tick ──────────────────────────────────────────────────────
 
-  private updatePlatforms(delta: number): void {
-    let needsRefresh = false;
+  // Returns the world positions of platforms that finished breaking this frame.
+  // A non-empty result also implies a refresh was needed (broken platforms
+  // disable their bodies).
+  private updatePlatforms(delta: number): Array<{ x: number; y: number }> {
+    const brokenPositions: Array<{ x: number; y: number }> = [];
     for (const platform of this.platforms) {
       if (platform.update(delta)) {
-        needsRefresh = true;
+        brokenPositions.push({ x: platform.gameObject.x, y: platform.gameObject.y });
       }
+      // Keep any snow cap glued to the platform top (covers moving platforms
+      // and regional visibility); no-op when the platform has no cap.
+      platform.updateSnowCap();
     }
-    if (needsRefresh) {
+    if (brokenPositions.length > 0) {
       this.platformGroup.refresh();
     }
+    return brokenPositions;
   }
 
   // ── Regional visibility ────────────────────────────────────────────────
@@ -279,6 +298,8 @@ export class PlatformManager {
       // even if it scrolls far off the top of the cleanup region.
       if (platform.isGoal()) return true;
       if (platform.gameObject.y < destroyTopThreshold) {
+        // Drop any snow cap before the platform's game object is destroyed.
+        platform.destroySnowCap();
         this.platformGroup.remove(platform.gameObject, true, true);
         cleaned = true;
         return false;

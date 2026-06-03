@@ -53,6 +53,15 @@ export interface PlatformConfig {
   moving?: MovingPlatformConfig;
 }
 
+// Per-frame outcome of PlatformManager.update(), surfaced so GameScene can
+// fire platform-break SFX/FX without reaching into platform internals.
+export interface PlatformManagerUpdateResult {
+  // Number of platforms that finished breaking (transitioned to broken) this frame.
+  brokenPlatformsCount: number;
+  // World positions of those platforms, so FX can spawn ice shards at each.
+  brokenPlatformPositions: Array<{ x: number; y: number }>;
+}
+
 // ── Tower / Phase ──────────────────────────────────────────────────────────
 
 export interface TowerPhaseConfig {
@@ -63,6 +72,80 @@ export interface TowerPhaseConfig {
   gravity: number;
   playerMoveSpeed: number;
   playerJumpVelocity: number;
+}
+
+// ── Hazard events ────────────────────────────────────────────────────────────
+
+export type HazardEventType =
+  | "side_projectile_warning"
+  | "side_projectile_fire"
+  | "snow_start"
+  | "snow_end";
+
+export type HazardSide = "left" | "right";
+
+// One scheduled hazard moment, emitted by HazardEventScheduler.update().
+export interface HazardEventPayload {
+  type: HazardEventType;
+  side?: HazardSide;     // present only for projectile events
+  heightMeters: number;  // run height when the event fired
+  time: number;          // scene time (ms) when the event fired
+}
+
+// Read-only view of the scheduler's internal state (debug / future HUD).
+export interface HazardSchedulerSnapshot {
+  isProjectileHazardEnabled: boolean;
+  isSnowActive: boolean;
+  snowEventsUsed: number;
+  nextProjectileFireInMs: number;
+  nextSnowEventInMs: number;
+}
+
+// ── Side projectile (Step 13) ───────────────────────────────────────────────
+
+export interface ProjectileConfig {
+  x: number;
+  y: number;
+  radius: number;
+  velocityX: number;
+  velocityY: number;
+  // Net downward gravity (px/s²) the projectile should feel.
+  gravityY: number;
+  bounce: number;
+  side: HazardSide;
+}
+
+// Raw data delivered to GameScene when a projectile overlaps the player, so the
+// knockback can be computed against config without the manager knowing physics.
+export interface ProjectileHitPayload {
+  projectileVelocityX: number;
+  projectileVelocityY: number;
+  projectileX: number;
+  projectileY: number;
+  playerX: number;
+  playerY: number;
+  side: HazardSide;
+}
+
+// ── Hailstones (Step 14.3, mixed into Snow Time) ─────────────────────────────
+
+export interface HailstoneConfig {
+  x: number;
+  y: number;
+  radius: number;
+  velocityX: number;
+  velocityY: number;
+  gravityY: number; // net downward gravity (px/s²)
+  bounce: number;
+}
+
+export interface HailstoneHitPayload {
+  hailstoneVelocityX: number;
+  hailstoneVelocityY: number;
+  hailstoneX: number;
+  hailstoneY: number;
+  playerX: number;
+  playerY: number;
 }
 
 // ── Camera ─────────────────────────────────────────────────────────────────

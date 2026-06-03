@@ -15,11 +15,15 @@ import {
   TEX_PLATFORM_MOVING,
   TEX_PLATFORM_SLIPPERY,
   TEX_PLAYER,
+  TEX_PROJECTILE,
+  TEX_HAILSTONE_PREFIX,
 } from "../utils/constants";
 import {
   ICE_TOWER_GOAL_PLATFORM_HEIGHT,
   ICE_TOWER_GOAL_PLATFORM_WIDTH,
 } from "../config/towerPhaseConfig";
+import { HAZARD_CONFIG } from "../config/hazardConfig";
+import { SNOW_CONFIG } from "../config/snowConfig";
 import { AnimationController } from "../systems/AnimationController";
 
 export class PreloadScene extends Phaser.Scene {
@@ -41,6 +45,62 @@ export class PreloadScene extends Phaser.Scene {
     this.createMovingPlatformTexture();
     this.createGoalPlatformTexture();
     this.createRectTexture(TEX_GROUND, GAME_HEIGHT, GROUND_HEIGHT, 0x5599cc);
+    this.createProjectileTexture();
+    this.createHailstoneTextures();
+  }
+
+  // ── Hailstone textures ─────────────────────────────────────────────────
+  // One filled-circle texture per integer radius so the Arcade circle body
+  // (setCircle(radius)) always matches the sprite without any scaling.
+
+  private createHailstoneTextures(): void {
+    const h = SNOW_CONFIG.hail;
+    for (let r = h.radiusMin; r <= h.radiusMax; r++) {
+      const key = `${TEX_HAILSTONE_PREFIX}${r}`;
+      if (this.textures.exists(key)) continue;
+
+      const d = r * 2;
+      const g = this.make.graphics({ x: 0, y: 0 });
+
+      // Brighter / whiter than the small projectile so hail reads as chunkier ice.
+      g.fillStyle(0xddf2ff, 1);
+      g.fillCircle(r, r, r);
+
+      g.lineStyle(1.5, 0x2a5a8a, 1);
+      g.strokeCircle(r, r, r - 0.75);
+
+      g.fillStyle(0xffffff, 0.95);
+      g.fillCircle(r - r * 0.3, r - r * 0.3, Math.max(1, r * 0.3));
+
+      g.generateTexture(key, d, d);
+      g.destroy();
+    }
+  }
+
+  // ── Projectile texture ─────────────────────────────────────────────────
+  // Icy ball: blue fill, dark rim, small offset highlight. Size = 2·radius so
+  // Projectile's body.setCircle(radius) centres with zero offset.
+
+  private createProjectileTexture(): void {
+    if (this.textures.exists(TEX_PROJECTILE)) return;
+
+    const r = HAZARD_CONFIG.sideProjectile.radius;
+    const d = r * 2;
+    const g = this.make.graphics({ x: 0, y: 0 });
+
+    // Small bright ice ball with a thin dark outline so it stays readable even
+    // at a 7px radius against the platforms and background.
+    g.fillStyle(0x99e0ff, 1);
+    g.fillCircle(r, r, r);
+
+    g.lineStyle(1.5, 0x12345a, 1);
+    g.strokeCircle(r, r, r - 0.75);
+
+    g.fillStyle(0xffffff, 0.95);
+    g.fillCircle(r - r * 0.3, r - r * 0.3, Math.max(1.2, r * 0.32));
+
+    g.generateTexture(TEX_PROJECTILE, d, d);
+    g.destroy();
   }
 
   // ── Player spritesheet ─────────────────────────────────────────────────
