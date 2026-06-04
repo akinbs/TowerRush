@@ -1,154 +1,123 @@
 import Phaser from "phaser";
-import type { ScoreSnapshot } from "../types/gameTypes";
+import { ResultOverlay } from "./ResultOverlay";
+import { UIPanel } from "../ui/UIPanel";
+import { UIButton } from "../ui/UIButton";
+import { UIChip } from "../ui/UIChip";
+import { UI_COLORS, UI_FONT, UI_SPACING, toCss } from "../config/uiTokens";
 import { UI_CONFIG } from "../config/uiConfig";
 
-const FONT = "monospace";
+export interface GameOverCallbacks {
+  onRestart: () => void;
+  onMainMenu?: () => void;
+}
 
-export class GameOverController {
-  private readonly scene: Phaser.Scene;
+export interface GameOverShowParams {
+  score: number;
+  // Height reached this run (metres).
+  heightMeters: number;
+  // Best height across runs (metres) — for the BEST chip.
+  bestHeightMeters: number;
+  isNewBest?: boolean;
+  deathReason?: string;
+}
 
-  private overlay!: Phaser.GameObjects.Rectangle;
-  private titleText!: Phaser.GameObjects.Text;
-  private scoreText!: Phaser.GameObjects.Text;
-  private bestText!: Phaser.GameObjects.Text;
-  private restartText!: Phaser.GameObjects.Text;
-  private restartBtn!: Phaser.GameObjects.Rectangle;
-  private restartBtnLabel!: Phaser.GameObjects.Text;
+const PANEL_W = 320;
+const PANEL_H = 392;
+const BTN_W = 248;
+const BTN_H = 56;
 
-  private isVisible = false;
-  private restartPressed = false;
+// "You lost, try again" result card. Coral/danger accent, deep-navy glass panel.
+// Restart (primary) + Main Menu (secondary). Built on the shared ResultOverlay
+// scaffolding so it matches the pause modal's material and motion.
+export class GameOverController extends ResultOverlay {
+  private readonly callbacks: GameOverCallbacks;
+  private readonly reasonText: Phaser.GameObjects.Text;
+  private readonly newBestBadge: UIChip;
+  private readonly scoreChip: UIChip;
+  private readonly heightChip: UIChip;
+  private readonly bestChip: UIChip;
 
-  private readonly resizeHandler: () => void;
+  constructor(scene: Phaser.Scene, callbacks: GameOverCallbacks) {
+    super(scene, UI_CONFIG.gameOverDepth, PANEL_W, PANEL_H);
+    this.callbacks = callbacks;
+    const top = -PANEL_H / 2;
 
-  constructor(scene: Phaser.Scene) {
-    this.scene = scene;
-    this.createElements();
+    const panel = new UIPanel(scene, 0, 0, { width: PANEL_W, height: PANEL_H });
 
-    this.resizeHandler = () => { this.updateLayout(); };
-    scene.scale.on("resize", this.resizeHandler);
+    // Coral title — no glow (danger never glows; glow is reserved for success).
+    const title = scene.add
+      .text(0, top + 40, "GAME OVER", {
+        fontFamily: UI_FONT.display, fontSize: "34px", fontStyle: "bold",
+        color: toCss(UI_COLORS.danger),
+        stroke: toCss(UI_COLORS.backgroundPrimary), strokeThickness: 5,
+      })
+      .setOrigin(0.5);
+    const accent = scene.add.rectangle(0, top + 66, 120, 3, UI_COLORS.danger, 0.9);
+
+    this.reasonText = scene.add
+      .text(0, top + 88, "", {
+        fontFamily: UI_FONT.body, fontSize: "13px", color: toCss(UI_COLORS.textSecondary),
+      })
+      .setOrigin(0.5);
+
+    this.newBestBadge = new UIChip(scene, 0, top + 116, "", "NEW BEST", {
+      width: 124, height: 26, accent: UI_COLORS.gold,
+    });
+    this.newBestBadge.setVisible(false);
+
+    this.scoreChip = new UIChip(scene, -64, top + 156, "SCORE", "0", {
+      width: 124, height: 30, accent: UI_COLORS.gold,
+    });
+    this.heightChip = new UIChip(scene, 64, top + 156, "HGT", "0m", {
+      width: 124, height: 30, accent: UI_COLORS.ice,
+    });
+    this.bestChip = new UIChip(scene, 0, top + 192, "BEST", "0m", {
+      width: 150, height: 30, accent: UI_COLORS.aurora,
+    });
+
+    const restartBtn = new UIButton(scene, 0, top + 246, "RESTART", () => this.callbacks.onRestart(), {
+      variant: "primary", width: BTN_W, height: BTN_H, fontSize: 20,
+    });
+    const menuBtn = this.buildMenuButton(scene, top + 246 + BTN_H + UI_SPACING.sm);
+
+    const hint = scene.add
+      .text(0, top + 366, "or press  R", {
+        fontFamily: UI_FONT.body, fontSize: "12px", color: toCss(UI_COLORS.textSecondary),
+      })
+      .setOrigin(0.5);
+
+    this.addToCard([
+      panel, title, accent, this.reasonText, this.newBestBadge,
+      this.scoreChip, this.heightChip, this.bestChip, restartBtn, menuBtn, hint,
+    ]);
+    this.initLayout();
   }
 
-  show(snapshot: ScoreSnapshot): void {
-    this.isVisible = true;
-    this.restartPressed = false;
+  show(params: GameOverShowParams): void {
+    this.scoreChip.setValue(String(params.score));
+    this.heightChip.setValue(`${params.heightMeters}m`);
+    this.bestChip.setValue(`${params.bestHeightMeters}m`);
+    this.reasonText.setText(params.deathReason ?? "You fell from the tower");
 
-    this.scoreText.setText(`Height: ${snapshot.bestHeightMeters} m`);
-    this.bestText.setText(`Score: ${snapshot.score}`);
+    const newBest = params.isNewBest ?? false;
+    this.newBestBadge.setVisible(newBest);
 
-    for (const obj of this.allObjects()) {
-      obj.setVisible(true);
-    }
-  }
-
-  hide(): void {
-    this.isVisible = false;
-    for (const obj of this.allObjects()) {
-      obj.setVisible(false);
-    }
-  }
-
-  // Returns true once per restart button tap — consumed on read.
-  consumeRestartPressed(): boolean {
-    const v = this.restartPressed;
-    this.restartPressed = false;
-    return v;
-  }
-
-  getIsVisible(): boolean { return this.isVisible; }
-
-  destroy(): void {
-    this.scene.scale.off("resize", this.resizeHandler);
-    for (const obj of this.allObjects()) {
-      obj.destroy();
-    }
+    this.present();
+    if (newBest) this.popIn(this.newBestBadge, 240);
   }
 
   // ── Private ────────────────────────────────────────────────────────────
 
-  private createElements(): void {
-    const W = this.scene.scale.width;
-    const H = this.scene.scale.height;
-    const depth = UI_CONFIG.gameOverDepth;
-
-    this.overlay = this.scene.add
-      .rectangle(W / 2, H / 2, W, H, 0x000033)
-      .setScrollFactor(0)
-      .setAlpha(UI_CONFIG.gameOverBgAlpha)
-      .setDepth(depth);
-
-    this.titleText = this.scene.add
-      .text(W / 2, H * 0.28, "GAME OVER", {
-        fontSize: "38px", fontFamily: FONT, color: "#ff4444",
-        stroke: "#000000", strokeThickness: 5,
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 1);
-
-    this.scoreText = this.scene.add
-      .text(W / 2, H * 0.42, "Height: 0 m", {
-        fontSize: "20px", fontFamily: FONT, color: "#e8e8ff",
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 1);
-
-    this.bestText = this.scene.add
-      .text(W / 2, H * 0.50, "Score: 0", {
-        fontSize: "20px", fontFamily: FONT, color: "#ffdd44",
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 1);
-
-    this.restartBtn = this.scene.add
-      .rectangle(W / 2, H * 0.65, 180, 52, 0x224422)
-      .setScrollFactor(0)
-      .setAlpha(0.9)
-      .setDepth(depth + 1)
-      .setInteractive({ useHandCursor: true })
-      .on("pointerdown", () => { this.restartPressed = true; })
-      .on("pointerover", () => { this.restartBtn.setFillStyle(0x448844); })
-      .on("pointerout",  () => { this.restartBtn.setFillStyle(0x224422); });
-
-    this.restartBtnLabel = this.scene.add
-      .text(W / 2, H * 0.65, "RESTART", {
-        fontSize: "18px", fontFamily: FONT, color: "#aaffaa",
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 2);
-
-    this.restartText = this.scene.add
-      .text(W / 2, H * 0.76, "or press  R", {
-        fontSize: "13px", fontFamily: FONT, color: "#9999bb",
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 1);
-
-    for (const obj of this.allObjects()) {
-      obj.setVisible(false);
+  private buildMenuButton(scene: Phaser.Scene, y: number): UIButton {
+    if (this.callbacks.onMainMenu) {
+      return new UIButton(scene, 0, y, "MAIN MENU", () => this.callbacks.onMainMenu?.(), {
+        variant: "secondary", width: BTN_W, height: BTN_H, fontSize: 18,
+      });
     }
-  }
-
-  private updateLayout(): void {
-    const W = this.scene.scale.width;
-    const H = this.scene.scale.height;
-
-    this.overlay.setPosition(W / 2, H / 2).setSize(W, H);
-    this.titleText.setPosition(W / 2, H * 0.28);
-    this.scoreText.setPosition(W / 2, H * 0.42);
-    this.bestText.setPosition(W / 2, H * 0.50);
-    this.restartBtn.setPosition(W / 2, H * 0.65);
-    this.restartBtnLabel.setPosition(W / 2, H * 0.65);
-    this.restartText.setPosition(W / 2, H * 0.76);
-  }
-
-  private allObjects(): (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] {
-    return [
-      this.overlay, this.titleText, this.scoreText, this.bestText,
-      this.restartBtn, this.restartBtnLabel, this.restartText,
-    ];
+    const btn = new UIButton(scene, 0, y, "MENU SOON", () => undefined, {
+      variant: "secondary", width: BTN_W, height: BTN_H, fontSize: 18,
+    });
+    btn.setEnabledState(false);
+    return btn;
   }
 }

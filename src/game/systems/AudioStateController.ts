@@ -12,14 +12,19 @@ type AudioEnabledCallback = (enabled: boolean) => void;
 export class AudioStateController {
   private static instance: AudioStateController | null = null;
 
-  private enabled: boolean;
+  // Host (YouTube) audio permission. The user can only mute WITHIN this — when
+  // the host disables audio, nothing the user does can re-enable it.
+  private hostEnabled: boolean;
+  // User-controlled mute (the menu/settings toggle).
+  private userMuted = false;
 
-  // Fan-out subscribers (e.g. SfxController). Notified only on a real change.
+  // Fan-out subscribers (e.g. SfxController). Notified only on a real change to
+  // the EFFECTIVE state (hostEnabled && !userMuted).
   private readonly subscribers = new Set<AudioEnabledCallback>();
 
   private constructor() {
     const bridge = YouTubePlayablesBridge.getInstance();
-    this.enabled = bridge.isAudioEnabled();
+    this.hostEnabled = bridge.isAudioEnabled();
     // Never unsubscribed — this controller lives for the whole app lifetime.
     bridge.onAudioEnabledChange((enabled) => { this.handleHostChange(enabled); });
   }
@@ -31,13 +36,32 @@ export class AudioStateController {
     return this.instance;
   }
 
+  // Effective state — what the SFX layer must obey.
   isAudioEnabled(): boolean {
-    return this.enabled;
+    return this.hostEnabled && !this.userMuted;
   }
 
-  // Subscribe to host audio-state changes. Returns an unsubscribe function;
-  // using a Set keyed on the callback makes duplicate registration a no-op and
-  // lets callers detach cleanly on scene shutdown.
+  // Whether the host currently permits audio (gates the user toggle).
+  isHostEnabled(): boolean {
+    return this.hostEnabled;
+  }
+
+  isUserMuted(): boolean {
+    return this.userMuted;
+  }
+
+  // User toggle. No-op against the host: muting always works, un-muting only
+  // takes effect while the host permits audio.
+  setUserMuted(muted: boolean): void {
+    if (this.userMuted === muted) return;
+    const prevEffective = this.isAudioEnabled();
+    this.userMuted = muted;
+    this.notifyIfChanged(prevEffective);
+  }
+
+  // Subscribe to EFFECTIVE audio-state changes. Returns an unsubscribe function;
+  // a Set keyed on the callback makes duplicate registration a no-op and lets
+  // callers detach cleanly on scene shutdown.
   onChange(callback: AudioEnabledCallback): () => void {
     this.subscribers.add(callback);
     return () => { this.subscribers.delete(callback); };
@@ -45,9 +69,16 @@ export class AudioStateController {
 
   // ── Private ────────────────────────────────────────────────────────────
 
-  private handleHostChange(enabled: boolean): void {
-    if (this.enabled === enabled) return;
-    this.enabled = enabled;
-    for (const callback of this.subscribers) callback(enabled);
+  private handleHostChange(hostEnabled: boolean): void {
+    if (this.hostEnabled === hostEnabled) return;
+    const prevEffective = this.isAudioEnabled();
+    this.hostEnabled = hostEnabled;
+    this.notifyIfChanged(prevEffective);
+  }
+
+  private notifyIfChanged(prevEffective: boolean): void {
+    const now = this.isAudioEnabled();
+    if (now === prevEffective) return;
+    for (const callback of this.subscribers) callback(now);
   }
 }

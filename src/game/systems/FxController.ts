@@ -75,6 +75,13 @@ export class FxController {
     this.burstCircles(x, y, c.count, c);
   }
 
+  // Small spark puff where a projectile strikes the player (knockback is applied
+  // separately by GameScene; this is purely visual, never lethal).
+  playProjectileImpact(x: number, y: number): void {
+    const c = FX_CONFIG.projectileImpact;
+    this.burstCircles(x, y, c.count, c);
+  }
+
   // Very small shake for a hard but survivable landing. Camera shake is a
   // transient matrix offset, so it never fights the scroll-based fall camera.
   playHardLandingShake(impactVelocityY = 0): void {

@@ -81,6 +81,7 @@ export const GROUND_SURFACE_Y = WORLD_HEIGHT - GROUND_HEIGHT;
 
 export const SCENE_BOOT = "BootScene";
 export const SCENE_PRELOAD = "PreloadScene";
+export const SCENE_MAIN_MENU = "MainMenuScene";
 export const SCENE_GAME = "GameScene";
 
 // ── Moving Platform ────────────────────────────────────────────────────────

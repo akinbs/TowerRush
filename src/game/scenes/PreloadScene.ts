@@ -6,7 +6,7 @@ import {
   PLAYER_FRAME_COUNT,
   PLAYER_HEIGHT,
   PLAYER_WIDTH,
-  SCENE_GAME,
+  SCENE_MAIN_MENU,
   SCENE_PRELOAD,
   TEX_GROUND,
   TEX_PLATFORM,
@@ -34,7 +34,8 @@ export class PreloadScene extends Phaser.Scene {
   create(): void {
     this.generatePlaceholderTextures();
     AnimationController.register(this);
-    this.scene.start(SCENE_GAME);
+    // Flow: Boot → Preload → MainMenu → Game (was Preload → Game directly).
+    this.scene.start(SCENE_MAIN_MENU);
   }
 
   private generatePlaceholderTextures(): void {

@@ -16,10 +16,10 @@ export const HAZARD_CONFIG = {
 
   sideProjectile: {
     // ── Scheduling (Step 12) ──
-    // Height (m) the player must reach before projectile hazards arm.
-    // DEV TIP: temporarily lower to ~5 to see scheduled fire without climbing,
-    // or use the dev-only manual fire key (T) which ignores this gate entirely.
-    startHeightMeters: 90,
+    // Height (m) the player must reach before projectile hazards arm. Aligned
+    // with the warmup end so all hazards enter the pool together at 30 m.
+    // DEV TIP: use the dev-only manual fire key (T) to test without climbing.
+    startHeightMeters: 30,
     // Random spacing (ms) between consecutive fire cycles.
     minFireIntervalMs: 4500,
     maxFireIntervalMs: 9500,
@@ -92,8 +92,9 @@ export const HAZARD_CONFIG = {
   },
 
   snow: {
-    // Height (m) before Snow Time can be scheduled.
-    startHeightMeters: 50,
+    // Height (m) before Snow Time can be scheduled. Aligned with the warmup end
+    // so snow (and the hail mixed into it) enters the pool at 30 m like the rest.
+    startHeightMeters: 30,
     // Hard cap on snow events within a single tower run.
     maxPerTower: 3,
     // Random spacing (ms) between snow events — kept large so it is rare.

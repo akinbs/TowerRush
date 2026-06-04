@@ -1,35 +1,34 @@
 import type { PlatformType } from "../types/gameTypes";
 import {
-  ICE_BREAKABLE_MAX_CHANCE,
-  ICE_BREAKABLE_MIN_CHANCE,
-  ICE_MAX_CONSECUTIVE_BREAKABLE,
-  ICE_MAX_CONSECUTIVE_MOVING,
-  ICE_MAX_CONSECUTIVE_SLIPPERY,
-  ICE_MOVING_MAX_CHANCE,
-  ICE_MOVING_MIN_CHANCE,
-  ICE_PHASE_BREAKABLE_FULL_METERS,
-  ICE_PHASE_BREAKABLE_START_METERS,
-  ICE_PHASE_LABEL_CRACKING,
-  ICE_PHASE_LABEL_MOVING,
-  ICE_PHASE_LABEL_NORMAL,
-  ICE_PHASE_LABEL_SLIPPERY,
-  ICE_PHASE_LABEL_SUMMIT,
-  ICE_PHASE_MOVING_FULL_METERS,
-  ICE_PHASE_MOVING_START_METERS,
-  ICE_PHASE_NORMAL_END_METERS,
-  ICE_PHASE_SLIPPERY_FULL_METERS,
-  ICE_SLIPPERY_MAX_CHANCE,
-  ICE_SLIPPERY_MIN_CHANCE,
+  GAMEPLAY_WARMUP_END_METERS,
+  MAX_CONSECUTIVE_BREAKABLE,
+  MAX_CONSECUTIVE_MOVING,
+  MAX_CONSECUTIVE_SLIPPERY,
+  PHASE_LABEL_MIXED,
+  PHASE_LABEL_SUMMIT,
+  PHASE_LABEL_WARMUP,
+  POST_WARMUP_FULL_MIX_HEIGHT_METERS,
+  POST_WARMUP_FULL_WEIGHTS,
+  POST_WARMUP_START_WEIGHTS,
+  type PlatformTypeWeights,
+} from "../config/difficultyConfig";
+import {
   ICE_TOWER_GOAL_SAFE_MARGIN_METERS,
   ICE_TOWER_HEIGHT_METERS,
 } from "../config/towerPhaseConfig";
 import { getHeightMetersFromY } from "../utils/heightUtils";
 
-// Combined special-type chance never exceeds this value.
-const MAX_COMBINED_SPECIAL_CHANCE = 0.65;
+const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
+// Drives the HUD phase label and resolves platform types.
+//
+// Difficulty is no longer phase-gated per feature: below the warmup height only
+// normal platforms appear; at and above it every type can mix via a height-
+// ramped weighted roll, bounded by per-type consecutive caps. The goal platform
+// is never rolled here — the summit logic places it.
 export class TowerPhaseController {
-  private phaseName = ICE_PHASE_LABEL_NORMAL;
+  private phaseName = PHASE_LABEL_WARMUP;
 
   private consecutiveSlipperyCount = 0;
   private consecutiveBreakableCount = 0;
@@ -38,15 +37,11 @@ export class TowerPhaseController {
   // Call every frame with the player's current height to update the phase label.
   update(heightMeters: number): void {
     if (heightMeters >= ICE_TOWER_HEIGHT_METERS - ICE_TOWER_GOAL_SAFE_MARGIN_METERS) {
-      this.phaseName = ICE_PHASE_LABEL_SUMMIT;
-    } else if (heightMeters >= ICE_PHASE_MOVING_START_METERS) {
-      this.phaseName = ICE_PHASE_LABEL_MOVING;
-    } else if (heightMeters >= ICE_PHASE_BREAKABLE_START_METERS) {
-      this.phaseName = ICE_PHASE_LABEL_CRACKING;
-    } else if (heightMeters >= ICE_PHASE_NORMAL_END_METERS) {
-      this.phaseName = ICE_PHASE_LABEL_SLIPPERY;
+      this.phaseName = PHASE_LABEL_SUMMIT;
+    } else if (heightMeters >= GAMEPLAY_WARMUP_END_METERS) {
+      this.phaseName = PHASE_LABEL_MIXED;
     } else {
-      this.phaseName = ICE_PHASE_LABEL_NORMAL;
+      this.phaseName = PHASE_LABEL_WARMUP;
     }
   }
 
@@ -54,86 +49,65 @@ export class TowerPhaseController {
     return this.phaseName;
   }
 
-  // ── Chance functions ───────────────────────────────────────────────────
-
-  getSlipperyChance(heightMeters: number): number {
-    if (heightMeters < ICE_PHASE_NORMAL_END_METERS) return 0;
-    if (heightMeters >= ICE_PHASE_SLIPPERY_FULL_METERS) return ICE_SLIPPERY_MAX_CHANCE;
-    const t =
-      (heightMeters - ICE_PHASE_NORMAL_END_METERS) /
-      (ICE_PHASE_SLIPPERY_FULL_METERS - ICE_PHASE_NORMAL_END_METERS);
-    return ICE_SLIPPERY_MIN_CHANCE + t * (ICE_SLIPPERY_MAX_CHANCE - ICE_SLIPPERY_MIN_CHANCE);
-  }
-
-  getBreakableChance(heightMeters: number): number {
-    if (heightMeters < ICE_PHASE_BREAKABLE_START_METERS) return 0;
-    if (heightMeters >= ICE_PHASE_BREAKABLE_FULL_METERS) return ICE_BREAKABLE_MAX_CHANCE;
-    const t =
-      (heightMeters - ICE_PHASE_BREAKABLE_START_METERS) /
-      (ICE_PHASE_BREAKABLE_FULL_METERS - ICE_PHASE_BREAKABLE_START_METERS);
-    return ICE_BREAKABLE_MIN_CHANCE + t * (ICE_BREAKABLE_MAX_CHANCE - ICE_BREAKABLE_MIN_CHANCE);
-  }
-
-  getMovingChance(heightMeters: number): number {
-    if (heightMeters < ICE_PHASE_MOVING_START_METERS) return 0;
-    if (heightMeters >= ICE_PHASE_MOVING_FULL_METERS) return ICE_MOVING_MAX_CHANCE;
-    const t =
-      (heightMeters - ICE_PHASE_MOVING_START_METERS) /
-      (ICE_PHASE_MOVING_FULL_METERS - ICE_PHASE_MOVING_START_METERS);
-    return ICE_MOVING_MIN_CHANCE + t * (ICE_MOVING_MAX_CHANCE - ICE_MOVING_MIN_CHANCE);
-  }
-
   // ── Platform type resolution ───────────────────────────────────────────
 
-  // Resolves platform type for a world-Y coordinate.
-  // Uses a single combined roll with proportional normalisation so the total
-  // special-type chance never exceeds MAX_COMBINED_SPECIAL_CHANCE.
+  // Resolves the platform type for a world-Y coordinate.
   choosePlatformType(platformY: number): PlatformType {
     const heightMeters = getHeightMetersFromY(platformY);
 
-    const rawMoving   = this.getMovingChance(heightMeters);
-    const rawBreakable = this.getBreakableChance(heightMeters);
-    const rawSlippery  = this.getSlipperyChance(heightMeters);
-
-    // Proportionally scale down if the combined chance exceeds the cap.
-    const rawTotal = rawMoving + rawBreakable + rawSlippery;
-    const scale    = rawTotal > MAX_COMBINED_SPECIAL_CHANCE
-      ? MAX_COMBINED_SPECIAL_CHANCE / rawTotal
-      : 1;
-
-    const movingChance   = rawMoving   * scale;
-    const breakableChance = rawBreakable * scale;
-    const slipperyChance  = rawSlippery  * scale;
-
-    const roll = Math.random();
-    let type: PlatformType;
-
-    if (roll < movingChance) {
-      type = "moving";
-    } else if (roll < movingChance + breakableChance) {
-      type = "breakable";
-    } else if (roll < movingChance + breakableChance + slipperyChance) {
-      type = "slippery";
-    } else {
-      type = "normal";
+    // Warmup: only normal platforms (also resets consecutive counters).
+    if (heightMeters < GAMEPLAY_WARMUP_END_METERS) {
+      return this.commitType("normal");
     }
 
-    // Enforce consecutive caps — fall back to normal when the cap is hit.
-    if (type === "moving"    && this.consecutiveMovingCount    >= ICE_MAX_CONSECUTIVE_MOVING)   type = "normal";
-    if (type === "breakable" && this.consecutiveBreakableCount >= ICE_MAX_CONSECUTIVE_BREAKABLE) type = "normal";
-    if (type === "slippery"  && this.consecutiveSlipperyCount  >= ICE_MAX_CONSECUTIVE_SLIPPERY)  type = "normal";
-
-    this.consecutiveMovingCount    = type === "moving"    ? this.consecutiveMovingCount    + 1 : 0;
-    this.consecutiveBreakableCount = type === "breakable" ? this.consecutiveBreakableCount + 1 : 0;
-    this.consecutiveSlipperyCount  = type === "slippery"  ? this.consecutiveSlipperyCount  + 1 : 0;
-
-    return type;
+    const weights = this.currentWeights(heightMeters);
+    const rolled = this.rollWeighted(weights);
+    return this.commitType(this.applyConsecutiveCaps(rolled));
   }
 
   reset(): void {
-    this.phaseName = ICE_PHASE_LABEL_NORMAL;
+    this.phaseName = PHASE_LABEL_WARMUP;
     this.consecutiveSlipperyCount = 0;
     this.consecutiveBreakableCount = 0;
     this.consecutiveMovingCount = 0;
+  }
+
+  // ── Private ────────────────────────────────────────────────────────────
+
+  // Interpolates the selection weights from START (at warmup end) to FULL.
+  private currentWeights(heightMeters: number): PlatformTypeWeights {
+    const span = POST_WARMUP_FULL_MIX_HEIGHT_METERS - GAMEPLAY_WARMUP_END_METERS;
+    const t = clamp01((heightMeters - GAMEPLAY_WARMUP_END_METERS) / span);
+    return {
+      normal: lerp(POST_WARMUP_START_WEIGHTS.normal, POST_WARMUP_FULL_WEIGHTS.normal, t),
+      slippery: lerp(POST_WARMUP_START_WEIGHTS.slippery, POST_WARMUP_FULL_WEIGHTS.slippery, t),
+      breakable: lerp(POST_WARMUP_START_WEIGHTS.breakable, POST_WARMUP_FULL_WEIGHTS.breakable, t),
+      moving: lerp(POST_WARMUP_START_WEIGHTS.moving, POST_WARMUP_FULL_WEIGHTS.moving, t),
+    };
+  }
+
+  private rollWeighted(w: PlatformTypeWeights): PlatformType {
+    const total = w.normal + w.slippery + w.breakable + w.moving;
+    let roll = Math.random() * total;
+    if ((roll -= w.slippery) < 0) return "slippery";
+    if ((roll -= w.breakable) < 0) return "breakable";
+    if ((roll -= w.moving) < 0) return "moving";
+    return "normal";
+  }
+
+  // Forces a normal platform when the same special type would exceed its cap.
+  private applyConsecutiveCaps(type: PlatformType): PlatformType {
+    if (type === "moving" && this.consecutiveMovingCount >= MAX_CONSECUTIVE_MOVING) return "normal";
+    if (type === "breakable" && this.consecutiveBreakableCount >= MAX_CONSECUTIVE_BREAKABLE) return "normal";
+    if (type === "slippery" && this.consecutiveSlipperyCount >= MAX_CONSECUTIVE_SLIPPERY) return "normal";
+    return type;
+  }
+
+  // Updates the consecutive counters and returns the committed type.
+  private commitType(type: PlatformType): PlatformType {
+    this.consecutiveMovingCount = type === "moving" ? this.consecutiveMovingCount + 1 : 0;
+    this.consecutiveBreakableCount = type === "breakable" ? this.consecutiveBreakableCount + 1 : 0;
+    this.consecutiveSlipperyCount = type === "slippery" ? this.consecutiveSlipperyCount + 1 : 0;
+    return type;
   }
 }

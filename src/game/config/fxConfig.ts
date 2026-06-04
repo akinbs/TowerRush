@@ -58,6 +58,20 @@ export const FX_CONFIG = {
     maxDurationMs: 480,
   },
 
+  // Small cyan/white spark puff where a projectile strikes the player.
+  projectileImpact: {
+    count: 5,
+    colors: [0xffffff, 0xaef0ff, 0x88ddff],
+    minRadius: 1,
+    maxRadius: 3,
+    alpha: 0.9,
+    spreadX: 18,
+    minRise: 4,
+    maxRise: 14,
+    minDurationMs: 120,
+    maxDurationMs: 200,
+  },
+
   // Tiny flecks the moment a breakable starts cracking (first contact).
   crackPulse: {
     count: 3,

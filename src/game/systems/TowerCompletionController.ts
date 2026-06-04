@@ -1,193 +1,127 @@
 import Phaser from "phaser";
-import type { ScoreSnapshot } from "../types/gameTypes";
+import { ResultOverlay } from "./ResultOverlay";
+import { UIPanel } from "../ui/UIPanel";
+import { UIButton } from "../ui/UIButton";
+import { UIChip } from "../ui/UIChip";
+import { UI_COLORS, UI_FONT, UI_SPACING, toCss } from "../config/uiTokens";
 import { UI_CONFIG } from "../config/uiConfig";
 
-const FONT = "monospace";
+export interface TowerCompletionCallbacks {
+  onRestart: () => void;
+  onMainMenu?: () => void;
+  // Reserved for the future second tower. The placeholder is non-interactive, so
+  // this is never invoked this step.
+  onContinue?: () => void;
+}
 
-// Functional (not polished) overlay shown when the player reaches the Ice
-// Tower summit goal platform. Mirrors GameOverController's lifecycle so
-// GameScene can drive both the same way:
-//   create() in constructor → show(snapshot) → consume*Pressed() → destroy()
-//
-// "Next Tower" is intentionally a disabled placeholder this step: the second
-// tower does not exist yet, so consumeContinuePressed() exists for future
-// wiring but always reports false (the button is non-interactive).
-export class TowerCompletionController {
-  private readonly scene: Phaser.Scene;
+export interface TowerCompletionShowParams {
+  score: number;
+  // Summit height reached this run (metres).
+  heightMeters: number;
+  // Best height across runs (metres) — for the BEST chip.
+  bestHeightMeters: number;
+  isNewBest?: boolean;
+  towerName?: string;
+}
 
-  private overlay!: Phaser.GameObjects.Rectangle;
-  private titleText!: Phaser.GameObjects.Text;
-  private heightText!: Phaser.GameObjects.Text;
-  private scoreText!: Phaser.GameObjects.Text;
-  private restartBtn!: Phaser.GameObjects.Rectangle;
-  private restartBtnLabel!: Phaser.GameObjects.Text;
-  private restartHintText!: Phaser.GameObjects.Text;
-  private continueBtn!: Phaser.GameObjects.Rectangle;
-  private continueBtnLabel!: Phaser.GameObjects.Text;
+const PANEL_W = 320;
+const PANEL_H = 410;
+const BTN_W = 248;
+const BTN_H = 56;
 
-  private isVisible = false;
-  private restartPressed = false;
-  // Reserved for the future second tower. Never set true while the continue
-  // button stays disabled, but the consume API is in place for later.
-  private continuePressed = false;
+// "You made it" summit result card. Gold/aurora success accent + soft glow on the
+// title (glow is reserved for success energy). Restart (primary) + Main Menu
+// (secondary) + a disabled "Next Tower" placeholder chip. The aurora ring pulse
+// behind it is fired separately by FxController, so this only enters the card.
+export class TowerCompletionController extends ResultOverlay {
+  private readonly callbacks: TowerCompletionCallbacks;
+  private readonly subtitleText: Phaser.GameObjects.Text;
+  private readonly newBestBadge: UIChip;
+  private readonly scoreChip: UIChip;
+  private readonly heightChip: UIChip;
+  private readonly bestChip: UIChip;
 
-  private readonly resizeHandler: () => void;
+  constructor(scene: Phaser.Scene, callbacks: TowerCompletionCallbacks) {
+    super(scene, UI_CONFIG.towerCompleteDepth, PANEL_W, PANEL_H);
+    this.callbacks = callbacks;
+    const top = -PANEL_H / 2;
 
-  constructor(scene: Phaser.Scene) {
-    this.scene = scene;
-    this.createElements();
+    const panel = new UIPanel(scene, 0, 0, { width: PANEL_W, height: PANEL_H });
 
-    this.resizeHandler = () => { this.updateLayout(); };
-    scene.scale.on("resize", this.resizeHandler);
+    const title = scene.add
+      .text(0, top + 52, "ICE TOWER\nCOMPLETE", {
+        fontFamily: UI_FONT.display, fontSize: "30px", fontStyle: "bold",
+        align: "center", color: toCss(UI_COLORS.gold),
+        stroke: toCss(UI_COLORS.backgroundPrimary), strokeThickness: 5,
+      })
+      .setOrigin(0.5);
+    title.setShadow(0, 2, toCss(UI_COLORS.gold), 12, false, true); // soft success glow
+    const accent = scene.add.rectangle(0, top + 88, 140, 3, UI_COLORS.aurora, 0.95);
+
+    this.subtitleText = scene.add
+      .text(0, top + 106, "Summit reached", {
+        fontFamily: UI_FONT.body, fontSize: "13px", color: toCss(UI_COLORS.textSecondary),
+      })
+      .setOrigin(0.5);
+
+    this.newBestBadge = new UIChip(scene, 0, top + 134, "", "NEW BEST", {
+      width: 124, height: 26, accent: UI_COLORS.gold,
+    });
+    this.newBestBadge.setVisible(false);
+
+    this.scoreChip = new UIChip(scene, -64, top + 172, "SCORE", "0", {
+      width: 124, height: 30, accent: UI_COLORS.gold,
+    });
+    this.heightChip = new UIChip(scene, 64, top + 172, "HGT", "0m", {
+      width: 124, height: 30, accent: UI_COLORS.ice,
+    });
+    this.bestChip = new UIChip(scene, 0, top + 206, "BEST", "0m", {
+      width: 150, height: 30, accent: UI_COLORS.aurora,
+    });
+
+    const restartBtn = new UIButton(scene, 0, top + 260, "RESTART", () => this.callbacks.onRestart(), {
+      variant: "primary", width: BTN_W, height: BTN_H, fontSize: 20,
+    });
+    const menuBtn = this.buildMenuButton(scene, top + 260 + BTN_H + UI_SPACING.sm);
+
+    // Disabled placeholder — the second tower does not exist this step.
+    const nextTowerChip = new UIChip(scene, 0, top + 376, "", "NEXT TOWER · SOON", {
+      width: 220, height: 26, accent: UI_COLORS.textSecondary,
+    });
+    nextTowerChip.setAlpha(0.7);
+
+    this.addToCard([
+      panel, title, accent, this.subtitleText, this.newBestBadge,
+      this.scoreChip, this.heightChip, this.bestChip, restartBtn, menuBtn, nextTowerChip,
+    ]);
+    this.initLayout();
   }
 
-  show(snapshot: ScoreSnapshot): void {
-    this.isVisible = true;
-    this.restartPressed = false;
-    this.continuePressed = false;
+  show(params: TowerCompletionShowParams): void {
+    this.scoreChip.setValue(String(params.score));
+    this.heightChip.setValue(`${params.heightMeters}m`);
+    this.bestChip.setValue(`${params.bestHeightMeters}m`);
+    this.subtitleText.setText(params.towerName ? `${params.towerName} — summit reached` : "Summit reached");
 
-    this.heightText.setText(`Height: ${snapshot.bestHeightMeters} m`);
-    this.scoreText.setText(`Score: ${snapshot.score}`);
+    const newBest = params.isNewBest ?? false;
+    this.newBestBadge.setVisible(newBest);
 
-    for (const obj of this.allObjects()) {
-      obj.setVisible(true);
-    }
-  }
-
-  hide(): void {
-    this.isVisible = false;
-    for (const obj of this.allObjects()) {
-      obj.setVisible(false);
-    }
-  }
-
-  // Returns true once per restart button tap — consumed on read.
-  consumeRestartPressed(): boolean {
-    const v = this.restartPressed;
-    this.restartPressed = false;
-    return v;
-  }
-
-  // Future-tower hook. Always false this step (continue button is disabled).
-  consumeContinuePressed(): boolean {
-    const v = this.continuePressed;
-    this.continuePressed = false;
-    return v;
-  }
-
-  getIsVisible(): boolean { return this.isVisible; }
-
-  destroy(): void {
-    this.scene.scale.off("resize", this.resizeHandler);
-    for (const obj of this.allObjects()) {
-      obj.destroy();
-    }
+    this.present();
+    if (newBest) this.popIn(this.newBestBadge, 240);
   }
 
   // ── Private ────────────────────────────────────────────────────────────
 
-  private createElements(): void {
-    const W = this.scene.scale.width;
-    const H = this.scene.scale.height;
-    const depth = UI_CONFIG.towerCompleteDepth;
-
-    this.overlay = this.scene.add
-      .rectangle(W / 2, H / 2, W, H, 0x001a2e)
-      .setScrollFactor(0)
-      .setAlpha(UI_CONFIG.towerCompleteBgAlpha)
-      .setDepth(depth);
-
-    this.titleText = this.scene.add
-      .text(W / 2, H * 0.24, "ICE TOWER\nCOMPLETE", {
-        fontSize: "34px", fontFamily: FONT, color: UI_CONFIG.towerCompleteTitleColor,
-        align: "center", stroke: "#000000", strokeThickness: 5,
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 1);
-
-    this.heightText = this.scene.add
-      .text(W / 2, H * 0.42, "Height: 0 m", {
-        fontSize: "20px", fontFamily: FONT, color: UI_CONFIG.towerCompleteAccentColor,
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 1);
-
-    this.scoreText = this.scene.add
-      .text(W / 2, H * 0.50, "Score: 0", {
-        fontSize: "20px", fontFamily: FONT, color: "#ffdd44",
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 1);
-
-    this.restartBtn = this.scene.add
-      .rectangle(W / 2, H * 0.64, 200, 50, 0x224422)
-      .setScrollFactor(0)
-      .setAlpha(0.9)
-      .setDepth(depth + 1)
-      .setInteractive({ useHandCursor: true })
-      .on("pointerdown", () => { this.restartPressed = true; })
-      .on("pointerover", () => { this.restartBtn.setFillStyle(0x448844); })
-      .on("pointerout",  () => { this.restartBtn.setFillStyle(0x224422); });
-
-    this.restartBtnLabel = this.scene.add
-      .text(W / 2, H * 0.64, "RESTART", {
-        fontSize: "18px", fontFamily: FONT, color: "#aaffaa",
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 2);
-
-    this.restartHintText = this.scene.add
-      .text(W / 2, H * 0.72, "or press  R", {
-        fontSize: "13px", fontFamily: FONT, color: "#9999bb",
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 1);
-
-    // Disabled placeholder — second tower not implemented this step.
-    this.continueBtn = this.scene.add
-      .rectangle(W / 2, H * 0.83, 200, 46, 0x1a2233)
-      .setScrollFactor(0)
-      .setAlpha(0.8)
-      .setDepth(depth + 1);
-
-    this.continueBtnLabel = this.scene.add
-      .text(W / 2, H * 0.83, "Next Tower: Coming Soon", {
-        fontSize: "13px", fontFamily: FONT, color: UI_CONFIG.continueDisabledColor,
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(depth + 2);
-
-    for (const obj of this.allObjects()) {
-      obj.setVisible(false);
+  private buildMenuButton(scene: Phaser.Scene, y: number): UIButton {
+    if (this.callbacks.onMainMenu) {
+      return new UIButton(scene, 0, y, "MAIN MENU", () => this.callbacks.onMainMenu?.(), {
+        variant: "secondary", width: BTN_W, height: BTN_H, fontSize: 18,
+      });
     }
-  }
-
-  private updateLayout(): void {
-    const W = this.scene.scale.width;
-    const H = this.scene.scale.height;
-
-    this.overlay.setPosition(W / 2, H / 2).setSize(W, H);
-    this.titleText.setPosition(W / 2, H * 0.24);
-    this.heightText.setPosition(W / 2, H * 0.42);
-    this.scoreText.setPosition(W / 2, H * 0.50);
-    this.restartBtn.setPosition(W / 2, H * 0.64);
-    this.restartBtnLabel.setPosition(W / 2, H * 0.64);
-    this.restartHintText.setPosition(W / 2, H * 0.72);
-    this.continueBtn.setPosition(W / 2, H * 0.83);
-    this.continueBtnLabel.setPosition(W / 2, H * 0.83);
-  }
-
-  private allObjects(): (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] {
-    return [
-      this.overlay, this.titleText, this.heightText, this.scoreText,
-      this.restartBtn, this.restartBtnLabel, this.restartHintText,
-      this.continueBtn, this.continueBtnLabel,
-    ];
+    const btn = new UIButton(scene, 0, y, "MENU SOON", () => undefined, {
+      variant: "secondary", width: BTN_W, height: BTN_H, fontSize: 18,
+    });
+    btn.setEnabledState(false);
+    return btn;
   }
 }

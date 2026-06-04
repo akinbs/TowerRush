@@ -1,10 +1,11 @@
 import Phaser from "phaser";
-import { GAME_WIDTH, GROUND_SURFACE_Y, MOVING_PLATFORM_CARRY_MAX_UP_VELOCITY, SCENE_GAME, WORLD_HEIGHT } from "../utils/constants";
+import { GAME_WIDTH, GROUND_SURFACE_Y, MOVING_PLATFORM_CARRY_MAX_UP_VELOCITY, SCENE_GAME, SCENE_MAIN_MENU, WORLD_HEIGHT } from "../utils/constants";
 import { Platform } from "../entities/Platform";
 import { Player } from "../entities/Player";
 import { InputController } from "../systems/InputController";
 import { CameraController } from "../systems/CameraController";
 import { HudController } from "../systems/HudController";
+import { PauseOverlayController } from "../systems/PauseOverlayController";
 import { ScoreController } from "../systems/ScoreController";
 import { FallDeathController } from "../systems/FallDeathController";
 import { GameOverController } from "../systems/GameOverController";
@@ -35,6 +36,7 @@ export class GameScene extends Phaser.Scene {
   private cameraController!: CameraController;
   private platformManager!: PlatformManager;
   private hudController!: HudController;
+  private pauseOverlay!: PauseOverlayController;
   private scoreController!: ScoreController;
   private fallDeathController!: FallDeathController;
   private gameOverController!: GameOverController;
@@ -66,6 +68,10 @@ export class GameScene extends Phaser.Scene {
   // everything regardless of user pause / gameOver / towerComplete, then on
   // resume only restarts physics if the run was actively playing.
   private isPlatformPaused = false;
+
+  // Set by the HUD pause button; consumed once in update() to toggle pause,
+  // sharing the same path as keyboard/mobile pause input.
+  private pauseTogglePending = false;
 
   // Unsubscribe handles for the bridge fan-out — called on SHUTDOWN so scene
   // restarts never leak or duplicate platform pause/resume listeners.
@@ -101,10 +107,30 @@ export class GameScene extends Phaser.Scene {
     this.scoreController = new ScoreController();
     this.scoreController.startRun(GROUND_SURFACE_Y);
 
-    this.hudController = new HudController(this, INITIAL_PHASE.name);
+    this.hudController = new HudController(this, {
+      onPausePressed: () => { this.pauseTogglePending = true; },
+    });
+    // Pause now lives in the HUD button → disable the on-screen mobile pause
+    // button so the two can't double-toggle (movement controls untouched).
+    this.inputController.setMobilePauseControlEnabled(false);
+
+    // User-pause modal (Resume / Restart / Main Menu / Sound). Resume reuses the
+    // single pause-toggle path so keyboard / HUD / overlay can never double-fire.
+    this.pauseOverlay = new PauseOverlayController(this, {
+      onResume: () => { this.pauseTogglePending = true; },
+      onRestart: () => this.restartRun(),
+      onMainMenu: () => this.returnToMainMenu(),
+      onToggleSound: () => this.togglePauseSound(),
+    });
     this.fallDeathController = new FallDeathController();
-    this.gameOverController = new GameOverController(this);
-    this.towerCompletionController = new TowerCompletionController(this);
+    this.gameOverController = new GameOverController(this, {
+      onRestart: () => this.restartRun(),
+      onMainMenu: () => this.returnToMainMenu(),
+    });
+    this.towerCompletionController = new TowerCompletionController(this, {
+      onRestart: () => this.restartRun(),
+      onMainMenu: () => this.returnToMainMenu(),
+    });
 
     // Side projectile hazard (Step 13). Driven by the scheduler's warning/fire
     // events; bounces off platforms and knocks the player back (never kills).
@@ -209,52 +235,38 @@ export class GameScene extends Phaser.Scene {
     // screen otherwise).
     if (this.isPlatformPaused) {
       if (this.gameState === "playing" || this.gameState === "paused") {
-        this.hudController.update(
-          this.scoreController.getSnapshot(),
-          true,
-          this.towerPhaseController.getCurrentPhaseName(),
-        );
+        this.refreshHud(true);
       }
       return;
     }
 
     // ── Game Over state ────────────────────────────────────────────────────
+    // Restart buttons fire onRestart directly; only the keyboard R shortcut is
+    // polled here (the overlay owns its own button input now).
     if (this.gameState === "gameOver") {
-      if (input.restartPressed || this.gameOverController.consumeRestartPressed()) {
-        this.restartRun();
-      }
+      if (input.restartPressed) this.restartRun();
       return;
     }
 
     // ── Tower Complete state ─────────────────────────────────────────────────
     // No pause, no physics, no fall death — only restart (R / button) is live.
-    // consumeContinuePressed() is wired for the future second tower but the
-    // continue button is a disabled placeholder, so it never fires this step.
+    // The "Next Tower" placeholder is non-interactive (second tower not built).
     if (this.gameState === "towerComplete") {
-      if (input.restartPressed || this.towerCompletionController.consumeRestartPressed()) {
-        this.restartRun();
-      }
-      this.towerCompletionController.consumeContinuePressed();
+      if (input.restartPressed) this.restartRun();
       return;
     }
 
     // ── Pause toggle — always handled, skips physics this frame ───────────
-    if (input.pausePressed) {
+    // Keyboard/mobile pausePressed and the HUD pause button share one path.
+    if (input.pausePressed || this.pauseTogglePending) {
+      this.pauseTogglePending = false;
       this.togglePause();
-      this.hudController.update(
-        this.scoreController.getSnapshot(),
-        this.gameState === "paused",
-        this.towerPhaseController.getCurrentPhaseName(),
-      );
+      this.refreshHud(this.gameState === "paused");
       return;
     }
 
-    // HUD refreshes every frame (shows PAUSED overlay when needed).
-    this.hudController.update(
-      this.scoreController.getSnapshot(),
-      this.gameState === "paused",
-      this.towerPhaseController.getCurrentPhaseName(),
-    );
+    // HUD refreshes every frame (status badge reflects pause/snow/phase).
+    this.refreshHud(this.gameState === "paused");
 
     if (this.gameState === "paused") return;
 
@@ -407,16 +419,54 @@ export class GameScene extends Phaser.Scene {
 
   // ── Private ────────────────────────────────────────────────────────────
 
+  // Pushes the current score/height/phase/snow state into the HUD.
+  private refreshHud(isPaused: boolean): void {
+    const snapshot = this.scoreController.getSnapshot();
+    this.hudController.update({
+      score: snapshot.score,
+      heightMeters: snapshot.currentHeightMeters,
+      bestHeightMeters: snapshot.bestHeightMeters,
+      phaseLabel: this.towerPhaseController.getCurrentPhaseName(),
+      isPaused,
+      isSnowActive: this.snowController.isActive(),
+    });
+  }
+
   private togglePause(): void {
     if (this.gameState === "playing") {
       this.gameState = "paused";
       this.physics.pause();
       // Silence any in-flight effect; no new SFX play while paused.
       this.sfx.stopAll();
+      const snapshot = this.scoreController.getSnapshot();
+      this.pauseOverlay.show({
+        score: snapshot.score,
+        heightMeters: snapshot.currentHeightMeters,
+        bestHeightMeters: snapshot.bestHeightMeters,
+        soundEnabled: AudioStateController.getInstance().isAudioEnabled(),
+      });
     } else if (this.gameState === "paused") {
       this.gameState = "playing";
       this.physics.resume();
+      this.pauseOverlay.hide();
     }
+  }
+
+  // Returns to the main menu from the pause modal. Resume physics first so the
+  // world isn't torn down frozen; scene.start fires SHUTDOWN → onShutdown() which
+  // destroys every controller (HUD, projectiles, snow, hail, FX, SFX, overlay).
+  private returnToMainMenu(): void {
+    this.physics.resume();
+    this.scene.start(SCENE_MAIN_MENU);
+  }
+
+  // Pause-modal sound toggle. Mirrors the menu: muting always works, un-muting
+  // only while the host permits audio. Reflects the effective state on the icon.
+  private togglePauseSound(): void {
+    const audio = AudioStateController.getInstance();
+    if (!audio.isHostEnabled()) return;
+    audio.setUserMuted(!audio.isUserMuted());
+    this.pauseOverlay.updateSoundState(audio.isAudioEnabled());
   }
 
   // Routes scheduler events to the live hazard systems. Snow events stay no-op
@@ -431,6 +481,7 @@ export class GameScene extends Phaser.Scene {
               cameraScrollY: this.cameras.main.scrollY,
               playerY: this.player.getY(),
             });
+            this.hudController.showHazardWarning(event.side);
           }
           break;
         case "side_projectile_fire":
@@ -489,6 +540,8 @@ export class GameScene extends Phaser.Scene {
     );
 
     this.player.applyKnockback({ velocityX, velocityY, controlLockMs: cfg.controlLockMs });
+    // Visual-only impact feedback at the contact point (knockback is the gameplay).
+    this.fx.playProjectileImpact(payload.projectileX, payload.projectileY);
   }
 
   // ── Snow Time helpers (shared by scheduler events and the dev toggle) ────────
@@ -562,9 +615,14 @@ export class GameScene extends Phaser.Scene {
     this.hailstoneManager.clear();
     this.snowController.clear();
     this.player.setSnowModifier(false);
+    // Defensive: an end-of-run state owns the screen — never leave the pause
+    // modal underneath it (no animation, just gone).
+    this.pauseOverlay.hideImmediate();
     this.hudController.setVisible(false);
     this.inputController.setMobileControlsVisible(false);
-    this.gameOverController.show(this.scoreController.getSnapshot());
+    // Build result params BEFORE handleRunFinished() persists the new best, so
+    // isNewBest compares this run against the previously-saved record.
+    this.gameOverController.show(this.buildResultParams());
     // Overlay is already up; persistence/score happen in the background.
     void this.handleRunFinished(null);
   }
@@ -580,9 +638,10 @@ export class GameScene extends Phaser.Scene {
     this.hailstoneManager.clear();
     this.snowController.clear();
     this.player.setSnowModifier(false);
+    this.pauseOverlay.hideImmediate();
     this.hudController.setVisible(false);
     this.inputController.setMobileControlsVisible(false);
-    this.towerCompletionController.show(this.scoreController.getSnapshot());
+    this.towerCompletionController.show(this.buildResultParams());
     void this.handleRunFinished(INITIAL_PHASE.id);
   }
 
@@ -650,6 +709,29 @@ export class GameScene extends Phaser.Scene {
     await save.save();
   }
 
+  // Shared result-card data for both end-of-run overlays. SCORE/HEIGHT are this
+  // run's values; BEST is the persisted record (folded with this run); isNewBest
+  // is true when this run's score beats the previously-saved best. Must be read
+  // before handleRunFinished() writes the new best.
+  private buildResultParams(): {
+    score: number;
+    heightMeters: number;
+    bestHeightMeters: number;
+    isNewBest: boolean;
+  } {
+    const snapshot = this.scoreController.getSnapshot();
+    const save = SaveController.getInstance();
+    const loaded = save.hasLoaded();
+    const prevBestScore = loaded ? save.getSaveData().bestScore : 0;
+    const prevBestHeight = loaded ? save.getSaveData().bestHeightMeters : 0;
+    return {
+      score: snapshot.score,
+      heightMeters: snapshot.bestHeightMeters,
+      bestHeightMeters: Math.max(prevBestHeight, snapshot.bestHeightMeters),
+      isNewBest: snapshot.score > prevBestScore,
+    };
+  }
+
   private restartRun(): void {
     // Physics is paused in gameOver / towerComplete — resume before the scene
     // tears down so the fresh run starts with a running physics world.
@@ -659,6 +741,7 @@ export class GameScene extends Phaser.Scene {
 
   private onShutdown(): void {
     this.hudController.destroy();
+    this.pauseOverlay.destroy();
     this.inputController.destroy();
     this.gameOverController.destroy();
     this.towerCompletionController.destroy();

@@ -69,6 +69,11 @@ export class InputController {
     this.mobile.setVisible(visible);
   }
 
+  // Disables the on-screen mobile pause button (pause is owned by the HUD).
+  setMobilePauseControlEnabled(enabled: boolean): void {
+    this.mobile.setPauseControlEnabled(enabled);
+  }
+
   destroy(): void {
     this.mobile.destroy();
   }
