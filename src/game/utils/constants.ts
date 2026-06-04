@@ -9,8 +9,11 @@ export const DEFAULT_GRAVITY = 800;
 
 // ── Player ─────────────────────────────────────────────────────────────────
 
-export const PLAYER_WIDTH = 32;
-export const PLAYER_HEIGHT = 48;
+// Display footprint of the player in world px (used for spawn, horizontal wrap
+// and foot-FX anchoring). Derived from the 48×64 frame × PLAYER_DISPLAY_SCALE,
+// rounded. NOT the physics body — that is tuned separately below.
+export const PLAYER_WIDTH = 43;
+export const PLAYER_HEIGHT = 58;
 export const PLAYER_MOVE_SPEED = 220;
 export const PLAYER_JUMP_VELOCITY = -520;
 // Deceleration factor applied each frame when there is no horizontal input.
@@ -121,20 +124,49 @@ export const PLAYER_SQUASH_REF_VELOCITY = 800;
 // still squash a little, hard landings squash fully).
 export const PLAYER_SQUASH_MIN_FACTOR = 0.5;
 
-// ── Player animation ───────────────────────────────────────────────────────
+// ── Player sprite sheet / animation ─────────────────────────────────────────
 
-// Total frames in the player spritesheet:
-// 0=idle, 1-4=walk cycle, 5=jump, 6=fall
-export const PLAYER_FRAME_COUNT = 7;
+// Source frame size of the final character sheet (one horizontal strip).
+export const PLAYER_FRAME_WIDTH = 48;
+export const PLAYER_FRAME_HEIGHT = 64;
+// Total frames per sheet. Layout:
+// 0,1=idle  2-5=walk  6=jump  7=fall  8=land  9=hit  10,11=win
+export const PLAYER_FRAME_COUNT = 12;
 
+// Visual scale applied to the 48×64 frame. < 1 because the new frame is larger
+// than the old 32×48 placeholder; keeps the character readable but fair against
+// the platforms. PLAYER_WIDTH/HEIGHT above are this scale baked in.
+export const PLAYER_DISPLAY_SCALE = 0.9;
+
+// Physics body in SOURCE-frame px (effective world body = value × scale).
+// Hugs the torso+legs silhouette, centred horizontally (flip-safe / symmetric)
+// with its bottom on the feet row (source y≈61) so the character stands on
+// platforms without floating or sinking.
+//   width  28 → world ~25   height 50 → world ~45
+//   offsetX (48-28)/2 = 10 (centred)   offsetY 11 → 11+50 = 61 (feet)
+export const PLAYER_BODY_WIDTH = 28;
+export const PLAYER_BODY_HEIGHT = 50;
+export const PLAYER_BODY_OFFSET_X = 10;
+export const PLAYER_BODY_OFFSET_Y = 11;
+
+// Base animation keys. Direction is a per-facing suffix ("-r" / "-l") appended
+// at runtime, since each facing has its own dedicated sheet (no flipX).
 export const ANIM_PLAYER_IDLE = "player-idle";
 export const ANIM_PLAYER_WALK = "player-walk";
 export const ANIM_PLAYER_JUMP = "player-jump";
 export const ANIM_PLAYER_FALL = "player-fall";
+// Optional / future-facing keys — registered now, not yet driven by gameplay.
+export const ANIM_PLAYER_LAND = "player-land";
+export const ANIM_PLAYER_HIT = "player-hit";
+export const ANIM_PLAYER_WIN = "player-win";
+
+export const ANIM_DIR_RIGHT = "-r";
+export const ANIM_DIR_LEFT = "-l";
 
 // ── Texture keys ──────────────────────────────────────────────────────────
 
 export const TEX_PLAYER = "player";
+export const TEX_PLAYER_LEFT = "player-left";
 export const TEX_PLATFORM = "platform";
 export const TEX_PLATFORM_SLIPPERY = "platform-slippery";
 export const TEX_PLATFORM_BREAKABLE = "platform-breakable";

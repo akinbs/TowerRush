@@ -1,0 +1,12 @@
+- generic [active] [ref=e1]:
+  - heading "IcyTower — Icy Climber Sprite Sheet" [level=1] [ref=e2]
+  - paragraph [ref=e3]:
+    - text: Deterministic vector generator. Output is a transparent 576×64 PNG, 12 frames of 48×64, side-profile facing right, shared feet baseline — matching
+    - code [ref=e4]: docs/ui/CHARACTER_SPRITE_SPEC.md
+    - text: . Click download, then drop the PNG into
+    - code [ref=e5]: src/game/assets/character/
+    - text: for UI Step 8B.
+  - generic [ref=e7]:
+    - generic [ref=e8]: 1× (actual export size 576×64)
+    - generic [ref=e10]: 8× preview
+    - button "Download icy_climber_sheet.png" [ref=e12] [cursor=pointer]

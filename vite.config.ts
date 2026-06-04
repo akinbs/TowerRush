@@ -9,6 +9,10 @@ export default defineConfig({
     // Phaser is ~1.5 MB minified — raise the limit so the warning doesn't fire.
     // YouTube Playables requires a single self-contained bundle anyway.
     chunkSizeWarningLimit: 2000,
+    // Inline assets up to 100 KB as base64 data URIs so the character sprite
+    // sheets (~14 KB each) ship inside the single JS bundle. YouTube Playables
+    // requires one self-contained bundle with no external asset requests.
+    assetsInlineLimit: 102400,
     rollupOptions: {
       output: {
         manualChunks: undefined,

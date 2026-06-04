@@ -1,12 +1,19 @@
 import Phaser from "phaser";
 import type { FacingDirection, InputState, PlatformType, TowerPhaseConfig } from "../types/gameTypes";
 import {
+  ANIM_DIR_LEFT,
+  ANIM_DIR_RIGHT,
   ANIM_PLAYER_FALL,
   ANIM_PLAYER_IDLE,
   ANIM_PLAYER_JUMP,
   ANIM_PLAYER_WALK,
   COYOTE_TIME_MS,
   JUMP_BUFFER_MS,
+  PLAYER_BODY_HEIGHT,
+  PLAYER_BODY_OFFSET_X,
+  PLAYER_BODY_OFFSET_Y,
+  PLAYER_BODY_WIDTH,
+  PLAYER_DISPLAY_SCALE,
   PLAYER_NORMAL_FRICTION_FACTOR,
   PLAYER_SLIPPERY_ACCEL_LERP,
   PLAYER_SLIPPERY_FRICTION_FACTOR,
@@ -82,17 +89,25 @@ export class Player {
     const spawnX = scene.scale.width / 2;
     const spawnY = WORLD_HEIGHT - PLAYER_HEIGHT / 2 - 24;
 
+    // Starts on the right-facing sheet, idle frame 0.
     this.gameObject = scene.physics.add.sprite(spawnX, spawnY, TEX_PLAYER, 0);
     // World bounds collision disabled — horizontal wrap is handled manually,
     // vertical ground collision is handled by the platform StaticGroup collider.
     this.gameObject.setCollideWorldBounds(false);
-    this.gameObject.setDisplaySize(PLAYER_WIDTH, PLAYER_HEIGHT);
+    // Display: scale the 48×64 frame down so the character reads at a fair size
+    // (origin centred). Direction is a sheet swap, not flipX, so scaleX stays
+    // positive and the landing squash can deform it safely.
+    this.gameObject.setScale(PLAYER_DISPLAY_SCALE);
 
     const body = this.gameObject.body as Phaser.Physics.Arcade.Body;
-    body.setSize(PLAYER_WIDTH, PLAYER_HEIGHT);
+    // Body is tuned independently of the frame: a centred column over the
+    // torso+legs whose bottom sits on the feet row. setSize/setOffset are in
+    // source-frame px; Arcade scales them by the sprite scale at runtime.
+    body.setSize(PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT);
+    body.setOffset(PLAYER_BODY_OFFSET_X, PLAYER_BODY_OFFSET_Y);
     body.setMaxVelocityY(1000);
 
-    // Capture the scale setDisplaySize produced as the squash baseline.
+    // Capture the display scale as the squash baseline (tweens restore to it).
     this.baseScaleX = this.gameObject.scaleX;
     this.baseScaleY = this.gameObject.scaleY;
   }
@@ -285,10 +300,10 @@ export class Player {
 
   // ── Facing direction ───────────────────────────────────────────────────
 
+  // Direction is realised by swapping to that facing's sheet on the next
+  // updateAnimation() (each facing has its own dedicated art), NOT setFlipX.
   setFacingDirection(direction: FacingDirection): void {
-    if (this.facingDirection === direction) return;
     this.facingDirection = direction;
-    this.gameObject.setFlipX(direction === "left");
   }
 
   getFacingDirection(): FacingDirection {
@@ -434,15 +449,18 @@ export class Player {
   // ── Animation ──────────────────────────────────────────────────────────────
 
   private updateAnimation(): void {
-    let key: string;
+    let base: string;
     if (!this.isGrounded()) {
-      key = this.getVelocityY() < 0 ? ANIM_PLAYER_JUMP : ANIM_PLAYER_FALL;
+      base = this.getVelocityY() < 0 ? ANIM_PLAYER_JUMP : ANIM_PLAYER_FALL;
     } else if (Math.abs(this.getVelocityX()) > 10) {
-      key = ANIM_PLAYER_WALK;
+      base = ANIM_PLAYER_WALK;
     } else {
-      key = ANIM_PLAYER_IDLE;
+      base = ANIM_PLAYER_IDLE;
     }
-    this.playAnim(key);
+    // Append the facing suffix so the matching sheet's animation plays. A turn
+    // (same base, new direction) changes the full key and swaps sheets here.
+    const suffix = this.facingDirection === "left" ? ANIM_DIR_LEFT : ANIM_DIR_RIGHT;
+    this.playAnim(base + suffix);
   }
 
   private playAnim(key: string): void {

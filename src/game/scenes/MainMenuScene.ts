@@ -1,5 +1,7 @@
 import Phaser from "phaser";
 import {
+  ANIM_DIR_RIGHT,
+  ANIM_PLAYER_IDLE,
   SCENE_GAME,
   SCENE_MAIN_MENU,
   TEX_PLAYER,
@@ -21,6 +23,11 @@ import { UIPanel } from "../ui/UIPanel";
 import { AudioStateController } from "../systems/AudioStateController";
 import { SaveController } from "../integrations/youtube/SaveController";
 import { YouTubePlayablesBridge } from "../integrations/youtube/YouTubePlayablesBridge";
+
+// Character-preview scales, tuned for the 48×64 character frame (smaller than
+// the old 32×48 placeholder's, so the on-screen size stays roughly the same).
+const PREVIEW_SCALE = 1.2;
+const PREVIEW_ENTER_SCALE = 1.05;
 
 // Main menu: branded entry between Preload and Game. Primitive-only UI (no new
 // assets). Shows best score/height, sound toggle, a settings placeholder, and a
@@ -115,10 +122,13 @@ export class MainMenuScene extends Phaser.Scene {
     this.previewPlatform = this.add
       .rectangle(0, 0, 96, 14, UI_COLORS.panelSoft, 0.9)
       .setStrokeStyle(UI_STROKE.base, UI_COLORS.border, 0.5);
+    // Origin Y 0.95 ≈ the feet row (source y≈61/64) so the character stands on
+    // the preview platform rather than floating above it.
     this.previewChar = this.add
       .sprite(0, 0, TEX_PLAYER, 0)
-      .setOrigin(0.5, 1)
-      .setScale(1.7);
+      .setOrigin(0.5, 0.95)
+      .setScale(PREVIEW_SCALE);
+    this.previewChar.play(ANIM_PLAYER_IDLE + ANIM_DIR_RIGHT);
 
     this.bestChip = new UIChip(this, 0, 0, "BEST", "0", { accent: UI_COLORS.gold });
     this.heightChip = new UIChip(this, 0, 0, "HEIGHT", "0m", { accent: UI_COLORS.ice });
@@ -217,11 +227,11 @@ export class MainMenuScene extends Phaser.Scene {
     this.riseIn(this.subtitle, 60);
 
     // Character preview pop + idle bob.
-    this.previewChar.setAlpha(0).setScale(1.5);
+    this.previewChar.setAlpha(0).setScale(PREVIEW_ENTER_SCALE);
     this.tweens.add({
       targets: this.previewChar,
       alpha: 1,
-      scale: 1.7,
+      scale: PREVIEW_SCALE,
       duration: UI_MOTION.cardEnterMs,
       delay: 120,
       ease: "Back.easeOut",

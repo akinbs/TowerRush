@@ -4,8 +4,8 @@ import {
   GROUND_HEIGHT,
   PLATFORM_HEIGHT,
   PLAYER_FRAME_COUNT,
-  PLAYER_HEIGHT,
-  PLAYER_WIDTH,
+  PLAYER_FRAME_HEIGHT,
+  PLAYER_FRAME_WIDTH,
   SCENE_MAIN_MENU,
   SCENE_PRELOAD,
   TEX_GROUND,
@@ -15,6 +15,7 @@ import {
   TEX_PLATFORM_MOVING,
   TEX_PLATFORM_SLIPPERY,
   TEX_PLAYER,
+  TEX_PLAYER_LEFT,
   TEX_PROJECTILE,
   TEX_HAILSTONE_PREFIX,
 } from "../utils/constants";
@@ -25,10 +26,27 @@ import {
 import { HAZARD_CONFIG } from "../config/hazardConfig";
 import { SNOW_CONFIG } from "../config/snowConfig";
 import { AnimationController } from "../systems/AnimationController";
+// Final character sheets. Vite inlines these (~14 KB each) as base64 data URIs
+// into the JS bundle (assetsInlineLimit in vite.config.ts), so there is no
+// external request — required for YouTube Playables' single self-contained bundle.
+import playerSheetUrl from "../assets/character/icytower_spritesheet.png";
+import playerSheetLeftUrl from "../assets/character/icytower_spritesheet_left.png";
 
 export class PreloadScene extends Phaser.Scene {
   constructor() {
     super({ key: SCENE_PRELOAD });
+  }
+
+  preload(): void {
+    // Real assets first; the generated fallback in create() only runs for keys
+    // the loader did not produce (e.g. a load error). One frame size for both
+    // facing sheets — they share the 48×64 / 12-frame layout.
+    const frameConfig = {
+      frameWidth: PLAYER_FRAME_WIDTH,
+      frameHeight: PLAYER_FRAME_HEIGHT,
+    };
+    this.load.spritesheet(TEX_PLAYER, playerSheetUrl, frameConfig);
+    this.load.spritesheet(TEX_PLAYER_LEFT, playerSheetLeftUrl, frameConfig);
   }
 
   create(): void {
@@ -39,7 +57,10 @@ export class PreloadScene extends Phaser.Scene {
   }
 
   private generatePlaceholderTextures(): void {
-    this.createPlayerSpritesheet();
+    // Fallbacks for both facings — skipped when the real sheets loaded, since
+    // each generator early-returns if its texture key already exists.
+    this.createPlayerSpritesheet(TEX_PLAYER);
+    this.createPlayerSpritesheet(TEX_PLAYER_LEFT);
     this.createRectTexture(TEX_PLATFORM, 100, PLATFORM_HEIGHT, 0x88ccff);
     this.createRectTexture(TEX_PLATFORM_SLIPPERY, 100, PLATFORM_HEIGHT, 0x22eeff);
     this.createBreakablePlatformTexture();
@@ -104,31 +125,39 @@ export class PreloadScene extends Phaser.Scene {
     g.destroy();
   }
 
-  // ── Player spritesheet ─────────────────────────────────────────────────
-  // 7 frames × PLAYER_WIDTH wide, PLAYER_HEIGHT tall.
-  // Frame layout: 0=idle  1-4=walk  5=jump  6=fall
+  // ── Player spritesheet (generated fallback) ────────────────────────────
+  // 12 frames × PLAYER_FRAME_WIDTH wide, PLAYER_FRAME_HEIGHT tall.
+  // Layout: 0,1=idle  2-5=walk  6=jump  7=fall  8=land  9=hit  10,11=win
+  // Only used when the real PNG sheet for `key` failed to load. It mirrors the
+  // real frame size/count so AnimationController's 12-frame mapping never hits
+  // a missing frame. Direction is irrelevant for a placeholder, so both the
+  // right and left keys get the same drawing.
 
-  private createPlayerSpritesheet(): void {
-    if (this.textures.exists(TEX_PLAYER)) return;
+  private createPlayerSpritesheet(key: string): void {
+    if (this.textures.exists(key)) return;
 
-    const totalW = PLAYER_WIDTH * PLAYER_FRAME_COUNT;
+    const fw = PLAYER_FRAME_WIDTH;
+    const fh = PLAYER_FRAME_HEIGHT;
+    const totalW = fw * PLAYER_FRAME_COUNT;
     const g = this.make.graphics({ x: 0, y: 0 });
 
     for (let frame = 0; frame < PLAYER_FRAME_COUNT; frame++) {
-      this.drawPlayerFrame(g, frame, frame * PLAYER_WIDTH);
+      this.drawPlayerFrame(g, frame, frame * fw);
     }
 
-    g.generateTexture(TEX_PLAYER, totalW, PLAYER_HEIGHT);
+    g.generateTexture(key, totalW, fh);
     g.destroy();
 
     // Slice the generated texture into individual animation frames.
-    const tex = this.textures.get(TEX_PLAYER);
+    const tex = this.textures.get(key);
     for (let i = 0; i < PLAYER_FRAME_COUNT; i++) {
-      tex.add(i, 0, i * PLAYER_WIDTH, 0, PLAYER_WIDTH, PLAYER_HEIGHT);
+      tex.add(i, 0, i * fw, 0, fw, fh);
     }
   }
 
-  // Draws one animation frame at horizontal offset ox on the given graphics object.
+  // Draws one fallback animation frame at horizontal offset ox. Coordinates are
+  // in the 48×64 frame; the character is centred (~x24) with feet near y=61 so
+  // it lines up with the same physics body the real sheet uses.
   private drawPlayerFrame(
     g: Phaser.GameObjects.Graphics,
     frame: number,
@@ -140,64 +169,88 @@ export class PreloadScene extends Phaser.Scene {
     const EYE_COLOR   = 0xffffff;
     const SCARF_COLOR = 0xee3333;
 
+    const cx = ox + 24; // frame centre
+
     // Head
     g.fillStyle(HEAD_COLOR, 1);
-    g.fillRect(ox + 11, 2, 10, 11);
+    g.fillRect(cx - 7, 12, 14, 14);
 
     // Eyes
     g.fillStyle(EYE_COLOR, 1);
-    g.fillRect(ox + 13, 4, 2, 3);
-    g.fillRect(ox + 17, 4, 2, 3);
+    g.fillRect(cx - 4, 16, 3, 4);
+    g.fillRect(cx + 2, 16, 3, 4);
 
     // Scarf
     g.fillStyle(SCARF_COLOR, 1);
-    g.fillRect(ox + 9, 12, 14, 3);
+    g.fillRect(cx - 9, 26, 18, 4);
 
     // Body
     g.fillStyle(BODY_COLOR, 1);
-    g.fillRect(ox + 9, 15, 14, 16);
+    g.fillRect(cx - 9, 30, 18, 18);
 
     // Legs + optional arm detail — varies by frame
     g.fillStyle(LEG_COLOR, 1);
     switch (frame) {
-      case 0: // idle: legs straight, side by side
-        g.fillRect(ox + 9,  31, 6, 15);
-        g.fillRect(ox + 17, 31, 6, 15);
+      case 0: // idle A
+      case 1: // idle B
+        g.fillRect(cx - 8, 48, 7, 13);
+        g.fillRect(cx + 1, 48, 7, 13);
         break;
 
-      case 1: // walk A: left leg forward, right leg back
-        g.fillRect(ox + 6,  33, 6, 13);
-        g.fillRect(ox + 20, 30, 6, 14);
+      case 2: // walk: lead left
+        g.fillRect(cx - 12, 50, 7, 11);
+        g.fillRect(cx + 4,  47, 7, 12);
         break;
 
-      case 2: // walk B: neutral (same as idle)
-        g.fillRect(ox + 9,  31, 6, 15);
-        g.fillRect(ox + 17, 31, 6, 15);
+      case 3: // walk: neutral
+        g.fillRect(cx - 8, 48, 7, 13);
+        g.fillRect(cx + 1, 48, 7, 13);
         break;
 
-      case 3: // walk C: right leg forward, left leg back
-        g.fillRect(ox + 6,  30, 6, 14);
-        g.fillRect(ox + 20, 33, 6, 13);
+      case 4: // walk: lead right
+        g.fillRect(cx - 11, 47, 7, 12);
+        g.fillRect(cx + 5,  50, 7, 11);
         break;
 
-      case 4: // walk D: neutral
-        g.fillRect(ox + 9,  31, 6, 15);
-        g.fillRect(ox + 17, 31, 6, 15);
+      case 5: // walk: neutral
+        g.fillRect(cx - 8, 48, 7, 13);
+        g.fillRect(cx + 1, 48, 7, 13);
         break;
 
-      case 5: // jump: legs together, arms raised
-        g.fillRect(ox + 11, 32, 10, 14); // merged legs
+      case 6: // jump: legs together, arms raised
+        g.fillRect(cx - 5, 48, 10, 13);
         g.fillStyle(BODY_COLOR, 1);
-        g.fillRect(ox + 2,  14, 7, 4);   // left arm up
-        g.fillRect(ox + 23, 14, 7, 4);   // right arm up
+        g.fillRect(cx - 16, 28, 8, 5); // arm up
+        g.fillRect(cx + 8,  28, 8, 5);
         break;
 
-      case 6: // fall: legs V-spread, arms wide
-        g.fillRect(ox + 7,  33, 6, 13);
-        g.fillRect(ox + 19, 33, 6, 13);
+      case 7: // fall: legs spread, arms wide
+        g.fillRect(cx - 10, 49, 7, 12);
+        g.fillRect(cx + 3,  49, 7, 12);
         g.fillStyle(BODY_COLOR, 1);
-        g.fillRect(ox + 1,  20, 8, 4);   // left arm out
-        g.fillRect(ox + 23, 20, 8, 4);   // right arm out
+        g.fillRect(cx - 18, 34, 9, 5); // arm out
+        g.fillRect(cx + 9,  34, 9, 5);
+        break;
+
+      case 8: // land: compressed legs
+        g.fillRect(cx - 9, 53, 8, 8);
+        g.fillRect(cx + 1, 53, 8, 8);
+        break;
+
+      case 9: // hit: stagger, one arm flung
+        g.fillRect(cx - 6, 49, 7, 12);
+        g.fillRect(cx + 3, 50, 7, 11);
+        g.fillStyle(BODY_COLOR, 1);
+        g.fillRect(cx + 9, 32, 9, 5); // flung arm
+        break;
+
+      case 10: // win A: both arms up
+      case 11: // win B
+        g.fillRect(cx - 8, 48, 7, 13);
+        g.fillRect(cx + 1, 48, 7, 13);
+        g.fillStyle(BODY_COLOR, 1);
+        g.fillRect(cx - 15, 24 + (frame === 10 ? 0 : 2), 7, 5);
+        g.fillRect(cx + 8,  24 + (frame === 10 ? 0 : 2), 7, 5);
         break;
     }
   }

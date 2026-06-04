@@ -6,6 +6,7 @@ import { InputController } from "../systems/InputController";
 import { CameraController } from "../systems/CameraController";
 import { HudController } from "../systems/HudController";
 import { PauseOverlayController } from "../systems/PauseOverlayController";
+import { EnvironmentBackgroundController } from "../systems/EnvironmentBackgroundController";
 import { ScoreController } from "../systems/ScoreController";
 import { FallDeathController } from "../systems/FallDeathController";
 import { GameOverController } from "../systems/GameOverController";
@@ -37,6 +38,7 @@ export class GameScene extends Phaser.Scene {
   private platformManager!: PlatformManager;
   private hudController!: HudController;
   private pauseOverlay!: PauseOverlayController;
+  private environmentBackground!: EnvironmentBackgroundController;
   private scoreController!: ScoreController;
   private fallDeathController!: FallDeathController;
   private gameOverController!: GameOverController;
@@ -85,6 +87,10 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     this.gameState = "playing";
     this.physics.world.setBounds(0, 0, this.scale.width, WORLD_HEIGHT);
+
+    // Parallax backdrop (UI Step 7). Renders behind all gameplay (negative
+    // depths); created first so it sits at the bottom of the display list.
+    this.environmentBackground = new EnvironmentBackgroundController(this);
 
     this.towerPhaseController = new TowerPhaseController();
     // Hazard timing infrastructure (Step 12). Emits scheduled events only; the
@@ -264,6 +270,13 @@ export class GameScene extends Phaser.Scene {
       this.refreshHud(this.gameState === "paused");
       return;
     }
+
+    // Parallax backdrop follows the camera; bestHeightMeters keeps the atmosphere
+    // steady when the player falls (it never decreases).
+    this.environmentBackground.update({
+      scrollY: this.cameras.main.scrollY,
+      heightMeters: this.scoreController.getSnapshot().bestHeightMeters,
+    });
 
     // HUD refreshes every frame (status badge reflects pause/snow/phase).
     this.refreshHud(this.gameState === "paused");
@@ -742,6 +755,7 @@ export class GameScene extends Phaser.Scene {
   private onShutdown(): void {
     this.hudController.destroy();
     this.pauseOverlay.destroy();
+    this.environmentBackground.destroy();
     this.inputController.destroy();
     this.gameOverController.destroy();
     this.towerCompletionController.destroy();

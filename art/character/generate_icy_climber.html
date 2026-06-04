@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>IcyTower — Icy Climber Sprite Sheet Generator</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0b1026; color: #f4fbff;
+         font: 14px system-ui, "Segoe UI", sans-serif; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { color: #b9c7e6; margin: 4px 0 16px; max-width: 640px; }
+  .row { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+  .card { background: #16234a; border: 1px solid #6bdfff55; border-radius: 12px; padding: 16px; }
+  canvas { image-rendering: pixelated; display: block; background:
+           repeating-conic-gradient(#1a2747 0% 25%, #131d3b 0% 50%) 50% / 16px 16px; }
+  button { background: #48d5ff; color: #07122a; border: 0; border-radius: 10px;
+           padding: 10px 18px; font-weight: 700; cursor: pointer; margin-top: 12px; }
+  code { background: #0b1026; padding: 1px 5px; border-radius: 4px; color: #ffc24b; }
+  .small { color: #9db2d8; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>IcyTower — Icy Climber Sprite Sheet</h1>
+  <p>Deterministic vector generator. Output is a transparent <b>576×64</b> PNG,
+     12 frames of 48×64, side-profile facing right, shared feet baseline — matching
+     <code>docs/ui/CHARACTER_SPRITE_SPEC.md</code>. Click download, then drop the
+     PNG into <code>src/game/assets/character/</code> for UI Step 8B.</p>
+
+  <div class="row">
+    <div class="card">
+      <div class="small">1× (actual export size 576×64)</div>
+      <canvas id="sheet" width="576" height="64"></canvas>
+      <div class="small" style="margin-top:12px">8× preview</div>
+      <canvas id="preview" width="576" height="64" style="width:1152px;height:128px"></canvas>
+      <br><button id="dl">Download icy_climber_sheet.png</button>
+    </div>
+  </div>
+
+<script>
+// ── Palette (matches the game's ice tokens) ──────────────────────────────────
+const C = {
+  outline:  "#071027",
+  jacket:   "#3a8fdb",
+  jacketHi: "#9ad8ff",
+  pants:    "#17406f",
+  boot:     "#0e2c4f",
+  glove:    "#bfeaff",
+  hood:     "#2a73c6",
+  frost:    "#f4fbff",
+  cyan:     "#48d5ff",
+  scarf:    "#ffc24b",
+  scarfHi:  "#ffe2a0",
+  eye:      "#f4fbff",
+  coral:    "#ff5d6c",
+};
+
+const CELL_W = 48, CELL_H = 64, FEET = 61, CX = 24;
+
+// A two-segment limb (hip→knee→foot or shoulder→elbow→hand) with a navy
+// underlay for a consistent thick outline, then the colour on top.
+function limb(ctx, a, b, c, w, color) {
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.strokeStyle = C.outline; ctx.lineWidth = w + 2.4;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = w;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.stroke();
+}
+function blob(ctx, x, y, r, color) {
+  ctx.fillStyle = C.outline; ctx.beginPath(); ctx.arc(x, y, r + 1.2, 0, 7); ctx.fill();
+  ctx.fillStyle = color;     ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+}
+
+// Draws one climber into cell at horizontal offset ox using pose p.
+// All offsets are relative to the cell so proportions stay identical frame to frame.
+function drawClimber(ctx, ox, p) {
+  const cx = ox + CX;
+  const hipY = 40 + (p.crouch || 0);
+  const shX = cx + (p.lean || 0);
+  const shY = 24 + (p.crouch || 0) - (p.stretch || 0);
+  const neck = { x: cx + (p.lean || 0) * 0.6, y: shY - 1 };
+  const headC = { x: neck.x + 1.5, y: shY - 9 - (p.stretch || 0) * 0.3 };
+
+  // Feet pinned to the shared baseline (jump/fall lift a touch via footLift).
+  const footY = FEET - (p.footLift || 0);
+  const hip = { x: cx, y: hipY };
+
+  // ── Back limbs first (depth) ──
+  limb(ctx,
+    { x: shX - 2, y: shY + 1 },
+    { x: shX - 6 + p.backArm.ex, y: shY + 8 + p.backArm.ey },
+    { x: shX - 7 + p.backArm.hx, y: shY + 15 + p.backArm.hy },
+    4.4, C.jacket);
+  blob(ctx, shX - 7 + p.backArm.hx, shY + 15 + p.backArm.hy, 2.4, C.glove);
+
+  limb(ctx,
+    { x: hip.x - 2, y: hip.y },
+    { x: hip.x - 3 + p.backLeg.kx, y: (hip.y + footY) / 2 + p.backLeg.ky },
+    { x: hip.x + p.backLeg.fx, y: footY },
+    5, C.pants);
+  boot(ctx, hip.x + p.backLeg.fx, footY, p.backLeg.dir);
+
+  // ── Scarf tail (behind torso, trails opposite to facing) ──
+  scarf(ctx, neck, p.scarfDX, p.scarfDY);
+
+  // ── Torso ──
+  ctx.lineCap = "round";
+  ctx.strokeStyle = C.outline; ctx.lineWidth = 15;
+  ctx.beginPath(); ctx.moveTo(hip.x, hip.y); ctx.lineTo(shX, shY); ctx.stroke();
+  ctx.strokeStyle = C.jacket; ctx.lineWidth = 12.6;
+  ctx.beginPath(); ctx.moveTo(hip.x, hip.y); ctx.lineTo(shX, shY); ctx.stroke();
+  // frost highlight strip down the front (facing right → front is +x edge)
+  ctx.strokeStyle = C.jacketHi; ctx.lineWidth = 2.2;
+  ctx.beginPath(); ctx.moveTo(hip.x + 4, hip.y - 2); ctx.lineTo(shX + 4, shY + 3); ctx.stroke();
+  // cyan belt
+  ctx.strokeStyle = C.cyan; ctx.lineWidth = 2.4;
+  ctx.beginPath(); ctx.moveTo(hip.x - 6, hip.y - 3); ctx.lineTo(hip.x + 6, hip.y - 4); ctx.stroke();
+
+  // ── Front leg ──
+  limb(ctx,
+    { x: hip.x + 2, y: hip.y },
+    { x: hip.x + 2 + p.frontLeg.kx, y: (hip.y + footY) / 2 + p.frontLeg.ky },
+    { x: hip.x + p.frontLeg.fx, y: footY },
+    5.2, C.pants);
+  boot(ctx, hip.x + p.frontLeg.fx, footY, p.frontLeg.dir);
+
+  // ── Head + hood ──
+  blob(ctx, headC.x, headC.y, 8.4, C.hood);
+  // hood brim toward the face (front)
+  ctx.fillStyle = C.outline;
+  ctx.beginPath(); ctx.ellipse(headC.x + 5, headC.y + 1, 4.5, 6.5, -0.35, 0, 7); ctx.fill();
+  ctx.fillStyle = C.frost;
+  ctx.beginPath(); ctx.ellipse(headC.x + 5.5, headC.y + 1, 3.0, 5.0, -0.35, 0, 7); ctx.fill();
+  // pom / hat tip
+  blob(ctx, headC.x - 6, headC.y - 5, 2.2, C.frost);
+  // eye
+  ctx.fillStyle = C.outline;
+  ctx.beginPath(); ctx.arc(headC.x + 5.4, headC.y - 0.5, 1.5, 0, 7); ctx.fill();
+
+  // ── Front arm ──
+  limb(ctx,
+    { x: shX + 2, y: shY + 1 },
+    { x: shX + 4 + p.frontArm.ex, y: shY + 8 + p.frontArm.ey },
+    { x: shX + 5 + p.frontArm.hx, y: shY + 15 + p.frontArm.hy },
+    4.6, C.jacket);
+  blob(ctx, shX + 5 + p.frontArm.hx, shY + 15 + p.frontArm.hy, 2.6, C.glove);
+
+  // ── Hit flash ──
+  if (p.accent) {
+    ctx.save(); ctx.globalAlpha = p.accent; ctx.globalCompositeOperation = "source-atop";
+    ctx.fillStyle = C.coral; ctx.fillRect(ox, 0, CELL_W, CELL_H); ctx.restore();
+  }
+}
+
+function boot(ctx, x, y, dir) {
+  ctx.fillStyle = C.outline;
+  ctx.beginPath(); ctx.ellipse(x + dir * 2, y + 0.5, 5.2, 3.4, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = C.boot;
+  ctx.beginPath(); ctx.ellipse(x + dir * 2, y, 4.2, 2.6, 0, 0, 7); ctx.fill();
+}
+
+function scarf(ctx, neck, dx, dy) {
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const mid = { x: neck.x + dx * 0.5 - 2, y: neck.y + 4 + dy * 0.5 };
+  const end = { x: neck.x + dx, y: neck.y + 6 + dy };
+  ctx.strokeStyle = C.outline; ctx.lineWidth = 5.6;
+  ctx.beginPath(); ctx.moveTo(neck.x - 1, neck.y + 1); ctx.quadraticCurveTo(mid.x, mid.y, end.x, end.y); ctx.stroke();
+  ctx.strokeStyle = C.scarf; ctx.lineWidth = 3.6;
+  ctx.beginPath(); ctx.moveTo(neck.x - 1, neck.y + 1); ctx.quadraticCurveTo(mid.x, mid.y, end.x, end.y); ctx.stroke();
+  // neck wrap
+  blob(ctx, neck.x + 0.5, neck.y + 1.5, 4.2, C.scarf);
+  ctx.strokeStyle = C.scarfHi; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(neck.x - 1, neck.y + 1); ctx.quadraticCurveTo(mid.x, mid.y, end.x, end.y); ctx.stroke();
+}
+
+// ── 12 poses (frame order per spec) ──────────────────────────────────────────
+// dir on legs: foot toe direction (+1 forward / -1 back) for the boot ellipse.
+const A = { ex:0, ey:0, hx:0, hy:0 };
+const POSES = [
+  // 0 idle_0
+  { scarfDX:-7, scarfDY:0,
+    frontLeg:{kx:1,ky:0,fx:4,dir:1}, backLeg:{kx:-1,ky:0,fx:-4,dir:-1},
+    frontArm:{ex:0,ey:1,hx:-1,hy:2}, backArm:{ex:0,ey:1,hx:0,hy:2} },
+  // 1 idle_1 (breathe up, scarf flutter)
+  { crouch:-1, scarfDX:-9, scarfDY:-4,
+    frontLeg:{kx:1,ky:0,fx:4,dir:1}, backLeg:{kx:-1,ky:0,fx:-4,dir:-1},
+    frontArm:{ex:0,ey:0,hx:-1,hy:1}, backArm:{ex:0,ey:0,hx:0,hy:1} },
+  // 2 walk_0 (right leg forward)
+  { lean:2, scarfDX:-10, scarfDY:1,
+    frontLeg:{kx:4,ky:-1,fx:9,dir:1}, backLeg:{kx:-3,ky:-2,fx:-8,dir:-1},
+    frontArm:{ex:-3,ey:0,hx:-4,hy:1}, backArm:{ex:3,ey:-1,hx:4,hy:0} },
+  // 3 walk_1 (passing, up)
+  { lean:2, crouch:-2, scarfDX:-9, scarfDY:-2,
+    frontLeg:{kx:2,ky:-2,fx:3,dir:1}, backLeg:{kx:0,ky:1,fx:-3,dir:-1},
+    frontArm:{ex:0,ey:0,hx:-1,hy:1}, backArm:{ex:1,ey:0,hx:1,hy:1} },
+  // 4 walk_2 (left leg forward)
+  { lean:2, scarfDX:-10, scarfDY:1,
+    frontLeg:{kx:-3,ky:-2,fx:-8,dir:-1}, backLeg:{kx:4,ky:-1,fx:9,dir:1},
+    frontArm:{ex:3,ey:-1,hx:4,hy:0}, backArm:{ex:-3,ey:0,hx:-4,hy:1} },
+  // 5 walk_3 (passing, up)
+  { lean:2, crouch:-2, scarfDX:-9, scarfDY:-2,
+    frontLeg:{kx:0,ky:1,fx:3,dir:1}, backLeg:{kx:2,ky:-2,fx:-3,dir:-1},
+    frontArm:{ex:1,ey:0,hx:1,hy:1}, backArm:{ex:0,ey:0,hx:-1,hy:1} },
+  // 6 jump (stretched, arms up, feet together lifted)
+  { stretch:3, footLift:3, scarfDX:-9, scarfDY:7,
+    frontLeg:{kx:1,ky:-1,fx:2,dir:1}, backLeg:{kx:-1,ky:-1,fx:-2,dir:-1},
+    frontArm:{ex:1,ey:-9,hx:3,hy:-16}, backArm:{ex:-1,ey:-9,hx:-2,hy:-15} },
+  // 7 fall (arms out, scarf up)
+  { stretch:1, footLift:2, scarfDX:-10, scarfDY:-9,
+    frontLeg:{kx:3,ky:0,fx:6,dir:1}, backLeg:{kx:-3,ky:0,fx:-6,dir:-1},
+    frontArm:{ex:6,ey:-3,hx:11,hy:-6}, backArm:{ex:-6,ey:-2,hx:-11,hy:-7} },
+  // 8 land (squat / squash)
+  { crouch:5, scarfDX:-8, scarfDY:-3,
+    frontLeg:{kx:6,ky:1,fx:8,dir:1}, backLeg:{kx:-6,ky:1,fx:-8,dir:-1},
+    frontArm:{ex:4,ey:1,hx:6,hy:3}, backArm:{ex:-4,ey:1,hx:-6,hy:3} },
+  // 9 hit (knockback, tilt back, coral flash)
+  { lean:-5, accent:0.22, scarfDX:-12, scarfDY:-5,
+    frontLeg:{kx:5,ky:-1,fx:9,dir:1}, backLeg:{kx:-2,ky:1,fx:-5,dir:-1},
+    frontArm:{ex:5,ey:-4,hx:9,hy:-8}, backArm:{ex:-5,ey:-2,hx:-9,hy:-2} },
+  // 10 win_0 (one arm rising)
+  { scarfDX:-9, scarfDY:-4,
+    frontLeg:{kx:1,ky:0,fx:4,dir:1}, backLeg:{kx:-1,ky:0,fx:-4,dir:-1},
+    frontArm:{ex:3,ey:-7,hx:6,hy:-13}, backArm:{ex:-1,ey:1,hx:-1,hy:2} },
+  // 11 win_1 (victory peak, hop, scarf flutter)
+  { crouch:-2, scarfDX:-11, scarfDY:-7,
+    frontLeg:{kx:1,ky:0,fx:4,dir:1}, backLeg:{kx:-1,ky:0,fx:-4,dir:-1},
+    frontArm:{ex:2,ey:-9,hx:4,hy:-17}, backArm:{ex:-2,ey:-8,hx:-3,hy:-15} },
+];
+
+const sheet = document.getElementById("sheet");
+const sctx = sheet.getContext("2d");
+sctx.clearRect(0, 0, 576, 64);
+POSES.forEach((p, i) => drawClimber(sctx, i * CELL_W, p));
+
+// 8× preview (nearest-neighbour)
+const pv = document.getElementById("preview").getContext("2d");
+pv.imageSmoothingEnabled = false;
+pv.clearRect(0, 0, 576, 64);
+pv.drawImage(sheet, 0, 0);
+
+document.getElementById("dl").onclick = () => {
+  sheet.toBlob((b) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(b);
+    a.download = "icy_climber_sheet.png";
+    a.click();
+  }, "image/png");
+};
+</script>
+</body>
+</html>
